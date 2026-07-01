@@ -1,0 +1,342 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================
+// AUTHENTICATION & USER MODELS
+// ===========================
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  password          String    // bcrypt hashed
+  isAdmin           Boolean   @default(false)
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  distributor       Distributor?
+}
+
+// ===========================
+// DISTRIBUTOR PROFILE MODEL
+// ===========================
+
+model Distributor {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Personal Info
+  name                  String
+  phone                 String
+  email                 String    @unique
+  
+  // MLM Hierarchy
+  sponsorId             String?
+  sponsor               Distributor? @relation("SponsorRelation", fields: [sponsorId], references: [id])
+  downline              Distributor[] @relation("SponsorRelation")
+  referralCode          String    @unique @default(cuid()) // Unique identifier for transfers and profile lookup
+  
+  // Performance Metrics
+  rank                  String    @default("Rookie")
+  totalSales            Decimal   @default(0) @db.Decimal(15, 2)
+  level1Sales           Decimal   @default(0) @db.Decimal(15, 2) // Direct sales only (for achievement calculations)
+  monthlySales          Decimal   @default(0) @db.Decimal(15, 2) // Monthly downline sales (resets 1st of month)
+  monthlyResetDate      DateTime  @default(now()) // Tracks when monthly sales were last reset
+  carryForwardSales     Decimal   @default(0) @db.Decimal(15, 2)
+  walletBalance         Decimal   @default(0) @db.Decimal(15, 2)
+  
+  // Leadership Salary Tracking
+  currentLeadershipRank Int?      @default(0) // Threshold index (0=10k, 1=25k, 2=50k, etc). Null if not qualified
+  currentLeadershipSalary Decimal @default(0) @db.Decimal(15, 2) // Current month's salary (for rank change deduction)
+  
+  // Bank Details & Status
+  bankAccount           String?
+  bankIFSC              String?
+  bankAccountHolder     String?
+  bankOtp               String?   // Hashed OTP for bank detail changes
+  bankOtpExpiry         DateTime? // OTP expiry time
+  status                String    @default("ACTIVE") // ACTIVE, SUSPENDED, BLOCKED
+  
+  // Wallet & Transactions
+  tPin                  String?   // 4-digit transaction PIN
+  walletTransfersOut    WalletTransfer[] @relation("FromDistributor")
+  walletTransfersIn     WalletTransfer[] @relation("ToDistributor")
+  deposits              Deposit[]
+  
+  // Relations
+  sales                 Sale[]
+  commissions           Commission[]
+  achievements          Achievement[]
+  salaries              LeadershipSalary[]
+  walletTransactions    WalletTransaction[]
+  withdrawalRequests    WithdrawalRequest[]
+  cartItems             CartItem[]
+  ancestorNodes         MLMTreeNode[] @relation("Ancestor")
+  descendantNodes       MLMTreeNode[] @relation("Descendant")
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@index([sponsorId])
+  @@index([rank])
+  @@index([status])
+  @@index([totalSales])
+}
+
+// ===========================
+// MLM TREE - MATERIALIZED PATH
+// ===========================
+
+model MLMTreeNode {
+  id                String    @id @default(cuid())
+  ancestorId        String
+  ancestor          Distributor @relation("Ancestor", fields: [ancestorId], references: [id], onDelete: Cascade)
+  descendantId      String
+  descendant        Distributor @relation("Descendant", fields: [descendantId], references: [id], onDelete: Cascade)
+  depth             Int       // Level (1-15)
+  
+  @@unique([ancestorId, descendantId])
+  @@index([ancestorId, depth])
+  @@index([descendantId])
+}
+
+// ===========================
+// PRODUCT CATALOG MODEL
+// ===========================
+
+model Product {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  price         Decimal   @db.Decimal(10, 2)
+  category      String
+  type          String    // PHYSICAL or DIGITAL
+  imageUrl      String?
+  stockQuantity Int?      // For physical products
+  gender        String?   // Male, Female, Kids (comma-separated if multiple)
+  sizes         String?   // S, M, L, XL, etc (comma-separated available sizes)
+  isActive      Boolean   @default(true)
+  
+  sales         Sale[]
+  cartItems     CartItem[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([category])
+  @@index([isActive])
+}
+
+// ===========================
+// CART ITEM MODEL
+// ===========================
+
+model CartItem {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  quantity        Int       @default(1)
+  selectedSize    String?   // Size selected by customer (S, M, L, XL, XXL, etc.)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@unique([distributorId, productId])
+  @@index([distributorId])
+}
+
+// ===========================
+// SALES TRANSACTION MODEL
+// ===========================
+
+model Sale {
+  id              String    @id @default(cuid())
+  sellerId        String
+  seller          Distributor @relation(fields: [sellerId], references: [id])
+  
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+  
+  quantity        Int
+  saleAmount      Decimal   @db.Decimal(15, 2)
+  paymentMethod   String    // WALLET, CARD, UPI, BANK_TRANSFER
+  orderStatus     String    @default("COMPLETED") // COMPLETED, PENDING, REFUNDED
+  
+  commissions     Commission[]
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([sellerId])
+  @@index([createdAt])
+}
+
+// ===========================
+// MLM COMMISSION MODEL (15 LEVELS)
+// ===========================
+
+model Commission {
+  id                String    @id @default(cuid())
+  distributorId     String
+  distributor       Distributor @relation(fields: [distributorId], references: [id])
+  
+  saleId            String
+  sale              Sale      @relation(fields: [saleId], references: [id])
+  
+  level             Int       // 1-15
+  commissionAmount  Decimal   @db.Decimal(15, 2)
+  commissionRate    Decimal   @db.Decimal(5, 2) // For audit trail
+  
+  createdAt         DateTime  @default(now())
+  
+  @@index([distributorId])
+  @@index([createdAt])
+}
+
+// ===========================
+// ACHIEVEMENT/MILESTONE MODEL (9 RANKS)
+// ===========================
+
+model Achievement {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id])
+  
+  rankName        String    // Influencer, Master, Legend, Icon, Titan, etc
+  salesTarget     Decimal   @db.Decimal(15, 2)
+  rewardAmount    Decimal   @db.Decimal(15, 2)
+  
+  claimedAt       DateTime?  // Null until user claims the reward
+  createdAt       DateTime  @default(now())
+  
+  @@unique([distributorId, rankName])
+  @@index([distributorId])
+}
+
+// ===========================
+// LEADERSHIP SALARY MODEL (MONTHLY)
+// ===========================
+
+model LeadershipSalary {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id])
+  
+  rank            String    // Current rank during month
+  salaryAmount    Decimal   @db.Decimal(15, 2)
+  poolPercentage  Decimal   @db.Decimal(5, 2) // For audit
+  
+  month           Int       // 1-12
+  year            Int
+  
+  createdAt       DateTime  @default(now())
+  
+  @@unique([distributorId, month, year])
+  @@index([distributorId])
+  @@index([year, month])
+}
+
+// ===========================
+// WALLET TRANSACTION AUDIT LOG
+// ===========================
+
+model WalletTransaction {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id])
+  
+  type            String    // MLM_COMMISSION, ACHIEVEMENT_REWARD, LEADERSHIP_SALARY, PRODUCT_PURCHASE, WITHDRAWAL, REFUND
+  amount          Decimal   @db.Decimal(15, 2)
+  description     String
+  referenceId     String?   // FK to source (commission_id, achievement_id, sales_id, etc)
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([distributorId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ===========================
+// WITHDRAWAL REQUEST MODEL
+// ===========================
+
+model WithdrawalRequest {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id])
+  
+  amount          Decimal   @db.Decimal(15, 2)
+  fee             Decimal   @db.Decimal(15, 2)
+  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  
+  bankAccount     String
+  bankIFSC        String
+  accountHolder   String
+  notes           String?
+  rejectionReason String?
+  
+  requestedAt     DateTime  @default(now())
+  processedAt     DateTime?
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([distributorId])
+  @@index([status])
+  @@index([requestedAt])
+}
+
+// ===========================
+// WALLET TRANSFER MODEL
+// ===========================
+
+model WalletTransfer {
+  id              String    @id @default(cuid())
+  fromDistributorId String
+  fromDistributor Distributor @relation("FromDistributor", fields: [fromDistributorId], references: [id], onDelete: Cascade)
+  
+  toDistributorId String
+  toDistributor   Distributor @relation("ToDistributor", fields: [toDistributorId], references: [id], onDelete: Cascade)
+  
+  amount          Decimal   @db.Decimal(15, 2)
+  status          String    @default("COMPLETED") // COMPLETED, PENDING, FAILED
+  notes           String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([fromDistributorId])
+  @@index([toDistributorId])
+  @@index([createdAt])
+}
+
+// ===========================
+// DEPOSIT (TOPUP) MODEL
+// ===========================
+
+model Deposit {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  
+  amount          Decimal   @db.Decimal(15, 2)
+  paymentMethod   String    // UPI, CARD, BANK_TRANSFER, WALLET
+  status          String    @default("COMPLETED") // COMPLETED, PENDING, FAILED
+  transactionId   String?   // External payment gateway ID
+  notes           String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([distributorId])
+  @@index([status])
+  @@index([createdAt])
+}

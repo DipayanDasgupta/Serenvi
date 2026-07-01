@@ -1,0 +1,45 @@
+
+// ===========================
+// WALLET TRANSFER MODEL
+// ===========================
+
+model WalletTransfer {
+  id              String    @id @default(cuid())
+  fromDistributorId String
+  fromDistributor Distributor @relation("FromDistributor", fields: [fromDistributorId], references: [id], onDelete: Cascade)
+  
+  toDistributorId String
+  toDistributor   Distributor @relation("ToDistributor", fields: [toDistributorId], references: [id], onDelete: Cascade)
+  
+  amount          Decimal   @db.Decimal(15, 2)
+  status          String    @default("COMPLETED") // COMPLETED, PENDING, FAILED
+  notes           String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([fromDistributorId])
+  @@index([toDistributorId])
+  @@index([createdAt])
+}
+
+// ===========================
+// DEPOSIT (TOPUP) MODEL
+// ===========================
+
+model Deposit {
+  id              String    @id @default(cuid())
+  distributorId   String
+  distributor     Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+  
+  amount          Decimal   @db.Decimal(15, 2)
+  paymentMethod   String    // UPI, CARD, BANK_TRANSFER, WALLET
+  status          String    @default("COMPLETED") // COMPLETED, PENDING, FAILED
+  transactionId   String?   // External payment gateway ID
+  notes           String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([distributorId])
+  @@index([status])
+  @@index([createdAt])
+}

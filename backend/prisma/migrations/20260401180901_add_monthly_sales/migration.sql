@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Distributor" ADD COLUMN     "monthlyResetDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "monthlySales" DECIMAL(15,2) NOT NULL DEFAULT 0;

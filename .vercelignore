@@ -1,0 +1,8 @@
+backend/
+backend/**
+*.log
+*.txt
+backend/backend_logs.txt
+backend/*.js
+backend/add-products.ts
+backend/products-data.json
