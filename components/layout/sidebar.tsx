@@ -83,8 +83,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
 
   const sidebarContent = (
@@ -113,7 +112,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             href={item.href}
             onClick={onClose}
             className={cn(
-              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
               isActive(item.href)
                 ? "bg-surface-2 text-accent border-l-2 border-accent"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
@@ -138,7 +137,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             href={item.href}
             onClick={onClose}
             className={cn(
-              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
               isActive(item.href)
                 ? "bg-surface-2 text-accent border-l-2 border-accent"
                 : "text-muted hover:bg-surface-2 hover:text-foreground"
@@ -154,7 +153,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <div className="border-t border-border p-3">
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center justify-center rounded-xl py-2 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          className="flex w-full items-center justify-center rounded-xl py-2 text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
           <svg
             className={cn(
@@ -198,7 +199,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </span>
                 <button
                   onClick={onClose}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-foreground"
+                  aria-label="Close navigation menu"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                     <path
@@ -216,7 +218,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     href={item.href}
                     onClick={onClose}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
                       isActive(item.href)
                         ? "bg-surface-2 text-accent border-l-2 border-accent"
                         : "text-muted hover:bg-surface-2 hover:text-foreground"
@@ -237,7 +239,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     href={item.href}
                     onClick={onClose}
                     className={cn(
-                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
                       isActive(item.href)
                         ? "bg-surface-2 text-accent border-l-2 border-accent"
                         : "text-muted hover:bg-surface-2 hover:text-foreground"

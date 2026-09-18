@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 const mobileNavItems = [
   {
     label: "Dashboard",
-    href: "/",
+    href: "/dashboard",
     icon: (
       <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -64,19 +64,20 @@ export function MobileNav() {
   const pathname = usePathname();
 
   const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-surface/95 backdrop-blur-xl md:hidden">
+    <nav aria-label="Mobile" className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-surface/95 backdrop-blur-xl md:hidden">
       <div className="flex items-center justify-around py-2">
         {mobileNavItems.map((item) => (
           <Link
             key={item.href}
             href={item.href}
+            aria-current={isActive(item.href) ? "page" : undefined}
+            aria-label={item.label}
             className={cn(
-              "flex flex-col items-center gap-1 px-3 py-1 text-[10px] font-medium transition-colors",
+              "flex flex-col items-center gap-1 px-3 py-1 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-lg",
               isActive(item.href) ? "text-accent" : "text-muted"
             )}
           >

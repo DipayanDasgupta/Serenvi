@@ -17,7 +17,8 @@ export function Header({ onMenuToggle }: HeaderProps) {
       <div className="flex items-center gap-3">
         <button
           onClick={onMenuToggle}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground md:hidden"
+          aria-label="Open navigation menu"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 md:hidden"
         >
           <svg
             className="h-5 w-5"
@@ -50,6 +51,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
           <input
             type="text"
             placeholder="Search..."
+            aria-label="Search products"
             className="h-9 w-64 rounded-xl border border-border bg-surface-2 pl-9 pr-4 text-sm text-foreground placeholder:text-muted/60 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/50"
           />
         </div>
@@ -59,7 +61,8 @@ export function Header({ onMenuToggle }: HeaderProps) {
       <div className="flex items-center gap-3">
         <Link
           href="/cart"
-          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          aria-label={`Cart${count > 0 ? `, ${count} items` : ""}`}
+          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
           <svg
             className="h-5 w-5"

@@ -20,16 +20,16 @@ export default function MarketingLayout({
             SERENVI
           </Link>
 
-          <nav className="hidden md:flex items-center gap-8">
+          <nav className="hidden md:flex items-center gap-8" aria-label="Primary">
             <Link
               href="/#features"
-              className="text-sm text-muted transition-colors hover:text-foreground"
+              className="text-sm text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded"
             >
               Features
             </Link>
             <Link
               href="/#how-it-works"
-              className="text-sm text-muted transition-colors hover:text-foreground"
+              className="text-sm text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded"
             >
               How it Works
             </Link>
@@ -38,20 +38,20 @@ export default function MarketingLayout({
           <div className="flex items-center gap-3">
             <Show when="signed-out">
               <SignInButton mode="modal">
-                <button className="rounded-xl px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-foreground">
+                <button className="rounded-xl px-4 py-2 text-sm font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
                   Sign In
                 </button>
               </SignInButton>
               <SignUpButton mode="modal">
-                <button className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-background transition-colors hover:bg-accent/90">
+                <button className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-background transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background">
                   Get Started
                 </button>
               </SignUpButton>
             </Show>
             <Show when="signed-in">
               <Link
-                href="/"
-                className="mr-2 rounded-xl bg-accent/10 px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
+                href="/dashboard"
+                className="mr-2 rounded-xl bg-accent/10 px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
                 Dashboard
               </Link>
