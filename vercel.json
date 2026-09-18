@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "${BACKEND_URL}/api/:path*"
+      "destination": "https://serenvi.app/api/:path*"
     },
     {
       "source": "/(.*)",
