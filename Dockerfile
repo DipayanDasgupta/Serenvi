@@ -9,6 +9,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next 16 evaluates rewrites() at build time, so BACKEND_URL must be set now
+# (compose-network hostname; override with --build-arg for other targets).
+ARG BACKEND_URL=http://backend:3001
+ENV BACKEND_URL=$BACKEND_URL
 RUN npm run build
 
 FROM node:20-alpine AS runner
