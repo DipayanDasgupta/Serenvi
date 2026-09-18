@@ -1,0 +1,56 @@
+# Serenvi single-host stack: Postgres + NestJS backend + Next.js frontend.
+# Secrets come from a `.env` file next to this file (see user-data on EC2):
+#   POSTGRES_PASSWORD=<random>
+#   JWT_SECRET=<random>
+#   FRONTEND_URL=http://<host>
+#   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<optional until auth configured>
+#   CLERK_SECRET_KEY=<optional until auth configured>
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: serenvi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: serenvi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serenvi -d serenvi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://serenvi:${POSTGRES_PASSWORD}@db:5432/serenvi?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      NODE_ENV: production
+      PORT: 3001
+    command: sh -c "npx prisma migrate deploy && npm run start:prod"
+    expose:
+      - "3001"
+    ports:
+      - "3001:3001"
+
+  frontend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      BACKEND_URL: http://backend:3001
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+    ports:
+      - "80:3000"
+
+volumes:
+  pgdata:

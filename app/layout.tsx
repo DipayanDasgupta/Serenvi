@@ -25,6 +25,21 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // CLERK_SECRET_KEY is server-only so this is evaluated at request time.
+  // Until Clerk keys are configured the app renders without auth instead of
+  // crashing every route (see proxy.ts). TODO(clerk): remove fallback.
+  if (!process.env.CLERK_SECRET_KEY) {
+    return (
+      <html lang="en">
+        <body
+          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        >
+          {children}
+        </body>
+      </html>
+    );
+  }
+
   return (
     <html lang="en">
       <body

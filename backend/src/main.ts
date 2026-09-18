@@ -75,6 +75,11 @@ async function bootstrap() {
   });
 
   const port = process.env.PORT || 3001;
+
+  // All routes served under /api to match the frontend contract (see
+  // next.config.ts rewrites: /api/:path* -> BACKEND_URL/api/:path*)
+  app.setGlobalPrefix('api');
+
   await app.listen(port);
 
   console.log(`\n🚀 SERENVI Backend is running on http://localhost:${port}`);

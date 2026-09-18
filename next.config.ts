@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Standalone output for Docker deployments (Vercel ignores this safely)
+  output: "standalone",
+
   // Proxy API calls to backend service
   async rewrites() {
     return [
