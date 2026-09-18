@@ -62,6 +62,29 @@ export class ResetPasswordDto {
   password!: string;
 }
 
+// Clerk exchange DTO: frontend sends the Clerk session JWT, backend verifies
+// it via JWKS and mints its own access token. Email/name are only used when
+// provisioning a brand-new account (identity always comes from the verified
+// token, never trusted blindly from the body).
+export class ClerkExchangeDto {
+  @IsString()
+  @MinLength(10)
+  @MaxLength(8192)
+  clerkToken!: string;
+
+  @IsOptional()
+  @IsEmail()
+  @Transform(({ value }: { value: any }) => value?.toLowerCase().trim())
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(100)
+  @Transform(({ value }: { value: any }) => value?.trim())
+  name?: string;
+}
+
 // Product DTOs
 export class CreateProductDto {
   @IsString()

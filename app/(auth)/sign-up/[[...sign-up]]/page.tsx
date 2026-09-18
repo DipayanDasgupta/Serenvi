@@ -1,5 +1,6 @@
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
+import { ClerkErrorBoundary } from "@/components/clerk-error-boundary";
 
 export default function SignUpPage() {
   // TODO(clerk): remove fallback once Clerk keys are configured.
@@ -26,14 +27,16 @@ export default function SignUpPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <SignUp
-        appearance={{
-          elements: {
-            rootBox: "mx-auto",
-            card: "bg-surface border border-border shadow-2xl",
-          },
-        }}
-      />
+      <ClerkErrorBoundary title="Sign-up failed to load">
+        <SignUp
+          appearance={{
+            elements: {
+              rootBox: "mx-auto",
+              card: "bg-surface border border-border shadow-2xl",
+            },
+          }}
+        />
+      </ClerkErrorBoundary>
     </div>
   );
 }

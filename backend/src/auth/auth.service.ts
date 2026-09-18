@@ -1,8 +1,10 @@
-import { Injectable, BadRequestException, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, UnauthorizedException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import * as jwt from 'jsonwebtoken';
+import jwksRsa from 'jwks-rsa';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../database/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -205,6 +207,140 @@ export class AuthService {
       { userId, distributorId, email, isAdmin },
       { expiresIn: '24h' },
     );
+  }
+
+  /**
+   * Exchange a Clerk session JWT for a backend access token.
+   *
+   * 1. Verifies the RS256 signature against the Clerk JWKS (never trusts the client).
+   * 2. Resolves identity from token claims + Clerk Backend API (verified email only
+   *    for linking; unverified emails can only create fresh, unclaimed addresses).
+   * 3. Auto-provisions User + Distributor on first login, then mints our own JWT
+   *    so every existing guard keeps working unchanged.
+   */
+  async clerkExchange(clerkToken: string, bodyEmail?: string, bodyName?: string) {
+    const jwksUri = this.configService.get('CLERK_JWKS_URL');
+    const issuer = this.configService.get('CLERK_JWT_ISSUER');
+    const clerkSecret = this.configService.get('CLERK_SECRET_KEY');
+    if (!jwksUri || !issuer) {
+      throw new ServiceUnavailableException('Clerk sign-in is not configured on the server');
+    }
+
+    // --- 1. Verify signature via JWKS ---
+    let payload: jwt.JwtPayload;
+    try {
+      const decoded = jwt.decode(clerkToken, { complete: true });
+      const kid = typeof decoded === 'object' && decoded?.header?.kid;
+      if (!kid) throw new Error('missing kid');
+      const client = jwksRsa({ jwksUri, cache: true, rateLimit: true, jwksRequestsPerMinute: 10 });
+      const key = await client.getSigningKey(kid);
+      payload = jwt.verify(clerkToken, key.getPublicKey(), {
+        algorithms: ['RS256'],
+        issuer,
+      }) as jwt.JwtPayload;
+    } catch (error: any) {
+      throw new UnauthorizedException(`Invalid Clerk token: ${error.message}`);
+    }
+    const sub = typeof payload.sub === 'string' && payload.sub;
+    if (!sub) throw new UnauthorizedException('Clerk token has no subject');
+
+    // --- 2. Resolve verified email (token claim preferred, Clerk API fallback) ---
+    let email = typeof payload.email === 'string' ? payload.email.toLowerCase().trim() : '';
+    let emailVerified = false;
+    if (email && payload.email_verified === true) {
+      emailVerified = true;
+    }
+    if ((!email || !emailVerified) && clerkSecret) {
+      try {
+        const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(sub)}`, {
+          headers: { Authorization: `Bearer ${clerkSecret}` },
+        });
+        if (res.ok) {
+          const u: any = await res.json();
+          const addrs: any[] = Array.isArray(u.email_addresses) ? u.email_addresses : [];
+          const primary = addrs.find((a) => a.id === u.primary_email_address_id) || addrs[0];
+          if (primary?.email_address) {
+            email = String(primary.email_address).toLowerCase().trim();
+            emailVerified = primary.verification?.status === 'verified';
+          }
+        }
+      } catch {
+        // fall through to body-provided email
+      }
+    }
+    if (!email && bodyEmail) email = bodyEmail.toLowerCase().trim();
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      throw new BadRequestException('Could not determine a verified email for this Clerk account');
+    }
+
+    // --- 3. Match or provision local account ---
+    let user = await this.prisma.user.findUnique({ where: { clerkUserId: sub } });
+    if (!user) {
+      const byEmail = await this.prisma.user.findUnique({ where: { email } });
+      if (byEmail) {
+        if (byEmail.clerkUserId && byEmail.clerkUserId !== sub) {
+          throw new UnauthorizedException('Email already linked to a different sign-in');
+        }
+        // Link password-era accounts only on verified emails to prevent takeover.
+        if (!byEmail.clerkUserId && !emailVerified) {
+          throw new UnauthorizedException('Email already registered. Verify your email with Clerk and retry.');
+        }
+        user = await this.prisma.user.update({
+          where: { id: byEmail.id },
+          data: { clerkUserId: sub },
+        });
+      }
+    }
+    if (!user) {
+      const existingEmail = await this.prisma.user.findUnique({ where: { email } });
+      if (existingEmail) {
+        throw new UnauthorizedException('Email already registered. Sign in with your original method.');
+      }
+      const displayName = (bodyName || email.split('@')[0] || 'Serenvi Member').slice(0, 100);
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          password: await bcrypt.hash(crypto.randomUUID(), 12), // unusable; Clerk owns auth
+          clerkUserId: sub,
+        },
+      });
+      let referralCode = this.generateReferralCode();
+      while (await this.prisma.distributor.findUnique({ where: { referralCode } })) {
+        referralCode = this.generateReferralCode();
+      }
+      await this.prisma.distributor.create({
+        data: {
+          userId: user.id,
+          // TODO: collect real name/phone at onboarding; Clerk SSO has neither reliably.
+          name: displayName.length >= 2 ? displayName : 'Serenvi Member',
+          phone: '0000000000', // placeholder; update via profile
+          email,
+          referralCode,
+          tPin: this.generateTPIN(),
+          walletBalance: new Decimal(0),
+          carryForwardSales: new Decimal(0),
+        },
+      });
+    }
+
+    const distributor = await this.prisma.distributor.findUnique({ where: { userId: user.id } });
+    if (!distributor) {
+      throw new UnauthorizedException('Distributor account not found');
+    }
+
+    const token = this.generateToken(user.id, distributor.id, user.email, user.isAdmin);
+    return {
+      access_token: token,
+      distributor: {
+        id: distributor.id,
+        name: distributor.name,
+        email: distributor.email,
+        phone: distributor.phone,
+        rank: distributor.rank,
+        referralCode: distributor.referralCode,
+        isAdmin: user.isAdmin,
+      },
+    };
   }
 
   private async addToMLMTree(sponsorId: string, distributorId: string) {

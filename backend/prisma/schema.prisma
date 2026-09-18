@@ -18,6 +18,7 @@ model User {
   id                String    @id @default(cuid())
   email             String    @unique
   password          String    // bcrypt hashed
+  clerkUserId       String?   @unique // Clerk `sub` for SSO-linked accounts (null for password-only accounts)
   isAdmin           Boolean   @default(false)
   resetToken        String?
   resetTokenExpiry  DateTime?
