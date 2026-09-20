@@ -2,6 +2,11 @@ import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
 import { ClerkErrorBoundary } from "@/components/clerk-error-boundary";
 
+// Auth pages must render per-request: the ClerkProvider gate in the root
+// layout reads server env, which is only reliable at request time (Docker
+// builds have no secrets). Static prerender would bake a provider-less tree.
+export const dynamic = "force-dynamic";
+
 export default function SignInPage() {
   // TODO(clerk): remove fallback once Clerk keys are configured.
   if (!process.env.CLERK_SECRET_KEY) {
