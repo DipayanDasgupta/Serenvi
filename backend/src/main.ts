@@ -8,6 +8,11 @@ import rateLimit from 'express-rate-limit';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Behind Caddy (reverse proxy) — required so rate limiting sees real client IPs.
+  // Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+  // and all clients share one rate-limit bucket.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   // === SECURITY MIDDLEWARE ===
   
   // 1. Helmet - Set security HTTP headers
