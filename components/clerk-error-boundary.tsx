@@ -10,11 +10,14 @@ interface Props {
 
 // Auth widgets (Clerk) load third-party scripts that ad-blockers and
 // dashboard misconfigurations can break. Never take down the whole page.
-export class ClerkErrorBoundary extends Component<Props, { failed: boolean }> {
-  state = { failed: false };
+export class ClerkErrorBoundary extends Component<Props, { failed: boolean; message: string }> {
+  state = { failed: false, message: "" };
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      failed: true,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   render() {
@@ -26,6 +29,11 @@ export class ClerkErrorBoundary extends Component<Props, { failed: boolean }> {
             The sign-in widget failed to load. Ad-blockers often block
             authentication scripts — disable shields for this site and retry.
           </p>
+          {this.state.message && (
+            <p className="mt-2 font-mono text-xs break-all text-danger/80">
+              {this.state.message}
+            </p>
+          )}
           <div className="mt-6 flex items-center justify-center gap-3">
             <button
               onClick={() => window.location.reload()}
