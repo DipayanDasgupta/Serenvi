@@ -15,7 +15,9 @@ import { formatCurrency } from "@/lib/utils";
 import type { Product } from "@/lib/types";
 
 export default function ProductsPage() {
-  const { data: products, isLoading } = useAPI<Product[]>("/products");
+  const { data, isLoading } = useAPI<Product[] | { products: Product[] }>("/products");
+  // Backend returns a paginated object { products, total }; normalize defensively.
+  const products: Product[] = Array.isArray(data) ? data : data?.products ?? [];
   const { addToCart } = useCart();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
