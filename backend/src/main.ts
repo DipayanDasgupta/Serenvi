@@ -50,7 +50,9 @@ async function bootstrap() {
   });
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/register', authLimiter);
-  app.use('/api/auth/clerk', authLimiter);
+  // NOTE: /api/auth/clerk stays under the global limiter only. It fires on
+  // every fresh session/device and carries single-use RS256 tokens, so the
+  // 5-attempt password brute-force budget would lock out legitimate users.
 
   // 3. Data sanitization - prevent NoSQL injection
   app.use(mongoSanitize({
