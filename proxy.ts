@@ -16,6 +16,7 @@ function unconfiguredMiddleware(req: NextRequest) {
     url.pathname === "/_not-found" ||
     url.pathname === "/sign-in" ||
     url.pathname === "/sign-up" ||
+    url.pathname === "/onboarding" ||
     url.pathname.startsWith("/api/")
   ) {
     return NextResponse.next();

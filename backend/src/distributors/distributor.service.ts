@@ -223,8 +223,63 @@ export class DistributorService {
     };
   }
 
-  async regenerateReferralCode(distributorId: string) {
+  /**
+   * Attach a sponsor to a distributor that doesn't have one yet (post-signup
+   * onboarding, Clerk or otherwise). One-way: re-parenting is rejected so a
+   * referral can't be stolen or changed later.
+   */
+  async setSponsor(distributorId: string, referralCode: string) {
     const distributor = await this.prisma.distributor.findUnique({
+      where: { id: distributorId },
+    });
+    if (!distributor) {
+      throw new BadRequestException('Distributor not found');
+    }
+    if (distributor.sponsorId) {
+      throw new BadRequestException('Sponsor is already set and cannot be changed');
+    }
+    const sponsor = await this.prisma.distributor.findUnique({
+      where: { referralCode },
+    });
+    if (!sponsor) {
+      throw new BadRequestException('Invalid referral code. Please enter a valid 6-character referral code.');
+    }
+    if (sponsor.id === distributorId) {
+      throw new BadRequestException('You cannot refer yourself');
+    }
+
+    await this.prisma.distributor.update({
+      where: { id: distributorId },
+      data: { sponsorId: sponsor.id },
+    });
+    await this.addToMLMTree(sponsor.id, distributorId);
+
+    return {
+      sponsorId: sponsor.id,
+      sponsorName: sponsor.name,
+      referralCode: distributor.referralCode,
+    };
+  }
+
+  private async addToMLMTree(sponsorId: string, distributorId: string) {
+    await this.prisma.mLMTreeNode.create({
+      data: { ancestorId: sponsorId, descendantId: distributorId, depth: 1 },
+    });
+    const sponsorAncestors = await this.prisma.mLMTreeNode.findMany({
+      where: { descendantId: sponsorId },
+    });
+    for (const ancestor of sponsorAncestors) {
+      await this.prisma.mLMTreeNode.create({
+        data: {
+          ancestorId: ancestor.ancestorId,
+          descendantId: distributorId,
+          depth: ancestor.depth + 1,
+        },
+      });
+    }
+  }
+
+  async regenerateReferralCode(distributorId: string) {    const distributor = await this.prisma.distributor.findUnique({
       where: { id: distributorId },
     });
 

@@ -85,6 +85,15 @@ export class ClerkExchangeDto {
   name?: string;
 }
 
+// Sponsor attach DTO: referral code entered after signup (Clerk onboarding
+// or profile). 6 uppercase letters/numbers, same format as registration.
+export class AttachSponsorDto {
+  @IsString()
+  @Matches(/^[A-Z0-9]{6}$/, { message: 'Referral code must be exactly 6 uppercase letters or numbers' })
+  @Transform(({ value }: { value: any }) => value?.toUpperCase().trim())
+  referralCode!: string;
+}
+
 // Product DTOs
 export class CreateProductDto {
   @IsString()

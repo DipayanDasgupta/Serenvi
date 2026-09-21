@@ -8,6 +8,11 @@ import Link from "next/link";
 
 const isClerkConfigured = !!process.env.CLERK_SECRET_KEY;
 
+// The header varies by auth cookie (signed-in vs signed-out), so this must
+// render per-request. A static prerender (built without secrets) would freeze
+// the signed-out header for everyone, forever.
+export const dynamic = "force-dynamic";
+
 function AuthActions() {
   // TODO(clerk): remove fallback once Clerk keys are configured.
   if (!isClerkConfigured) {

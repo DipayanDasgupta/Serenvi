@@ -274,6 +274,7 @@ export class AuthService {
     }
 
     // --- 3. Match or provision local account ---
+    let isNewDistributor = false;
     let user = await this.prisma.user.findUnique({ where: { clerkUserId: sub } });
     if (!user) {
       const byEmail = await this.prisma.user.findUnique({ where: { email } });
@@ -296,6 +297,7 @@ export class AuthService {
       if (existingEmail) {
         throw new UnauthorizedException('Email already registered. Sign in with your original method.');
       }
+      isNewDistributor = true;
       const displayName = (bodyName || email.split('@')[0] || 'Serenvi Member').slice(0, 100);
       user = await this.prisma.user.create({
         data: {
@@ -331,6 +333,7 @@ export class AuthService {
     const token = this.generateToken(user.id, distributor.id, user.email, user.isAdmin);
     return {
       access_token: token,
+      isNewDistributor,
       distributor: {
         id: distributor.id,
         name: distributor.name,

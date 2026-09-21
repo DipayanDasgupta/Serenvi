@@ -1,7 +1,11 @@
-import { Controller, Get, Put, Param, Body, UseGuards, Query, Post } from '@nestjs/common';
+import { Controller, Get, Put, Param, Body, UseGuards, Query, Post, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { DistributorService } from './distributor.service';
-import { UpdateDistributorDto } from '../common/dtos';
+import { UpdateDistributorDto, AttachSponsorDto } from '../common/dtos';
+
+interface AuthenticatedRequest extends Request {
+  user?: { userId: string; distributorId: string; email: string; isAdmin: boolean };
+}
 
 @Controller('distributors')
 @UseGuards(AuthGuard('jwt'))
@@ -12,6 +16,16 @@ export class DistributorController {
   @Get('profile/referral/:referralCode')
   async getProfileByReferralCode(@Param('referralCode') referralCode: string) {
     return this.distributorService.getProfileByReferralCode(referralCode);
+  }
+
+  @Get('me')
+  async getMe(@Request() req: AuthenticatedRequest) {
+    return this.distributorService.getProfile(req.user?.distributorId || '');
+  }
+
+  @Post('me/sponsor')
+  async attachSponsor(@Request() req: AuthenticatedRequest, @Body() dto: AttachSponsorDto) {
+    return this.distributorService.setSponsor(req.user?.distributorId || '', dto.referralCode);
   }
 
   @Get(':id')

@@ -31,6 +31,16 @@ async function exchangeForBackendToken(clerkToken: string): Promise<string | und
     } catch {
       // ignore persistence failures
     }
+    // Brand-new account (just provisioned): collect the sponsor's referral
+    // code before entering the app. Runs once — subsequent exchanges return
+    // isNewDistributor: false.
+    if (
+      data?.isNewDistributor === true &&
+      typeof window !== "undefined" &&
+      !window.location.pathname.startsWith("/onboarding")
+    ) {
+      window.location.href = "/onboarding";
+    }
     return token;
   }
   return undefined;
