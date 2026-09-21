@@ -20,6 +20,26 @@ export class ClerkErrorBoundary extends Component<Props, { failed: boolean; mess
     };
   }
 
+  private resetAndReload = () => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {
+      // ignore storage failures
+    }
+    try {
+      document.cookie.split(";").forEach((c) => {
+        const name = c.split("=")[0]?.trim();
+        if (name) {
+          document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+        }
+      });
+    } catch {
+      // ignore cookie failures
+    }
+    window.location.reload();
+  };
+
   render() {
     if (this.state.failed) {
       return (
@@ -34,12 +54,18 @@ export class ClerkErrorBoundary extends Component<Props, { failed: boolean; mess
               {this.state.message}
             </p>
           )}
-          <div className="mt-6 flex items-center justify-center gap-3">
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => window.location.reload()}
               className="inline-flex items-center rounded-xl bg-accent px-6 py-2.5 text-sm font-semibold text-background transition-colors hover:bg-accent/90"
             >
               Retry
+            </button>
+            <button
+              onClick={this.resetAndReload}
+              className="inline-flex items-center rounded-xl border border-border px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-2"
+            >
+              Clear site data & reload
             </button>
             <Link
               href="/"
