@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthToken } from "@/lib/hooks/use-api";
+import { useAuth } from "@clerk/nextjs";
 import { api } from "@/lib/api-client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,12 +13,20 @@ import { Input } from "@/components/ui/input";
 export function OnboardingForm() {
   const router = useRouter();
   const getToken = useAuthToken();
+  const { isLoaded, isSignedIn } = useAuth();
   const [checking, setChecking] = useState(true);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    // Wait for Clerk to hydrate — on first mount isSignedIn is false even
+    // for logged-in users, which would wrongly bounce to "/".
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      router.replace("/");
+      return;
+    }
     (async () => {
       const token = await getToken();
       if (!token) {
@@ -38,7 +47,7 @@ export function OnboardingForm() {
       setChecking(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isLoaded, isSignedIn]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
