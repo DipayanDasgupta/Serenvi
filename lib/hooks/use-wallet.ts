@@ -11,9 +11,14 @@ export function useWallet() {
 }
 
 export function useWalletTransactions(skip = 0, take = 20) {
-  return useAPI<WalletTransaction[]>(
+  const result = useAPI<WalletTransaction[] | { transactions: WalletTransaction[] }>(
     `/wallet/history?skip=${skip}&take=${take}`
   );
+  // Backend returns a paginated object { transactions, total }; normalize defensively.
+  const data: WalletTransaction[] | undefined = Array.isArray(result.data)
+    ? result.data
+    : result.data?.transactions;
+  return { ...result, data };
 }
 
 export function useWalletActions() {
