@@ -34,9 +34,18 @@ yarn-error.log*
 .env*
 !.env.example
 
+# confidential operator handover (live secrets - NEVER commit)
+serenvi-handover.md
+serenvi-handover.md:Zone.Identifier
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# AWS credential exports - NEVER commit
+*_accessKeys.csv
+*.csv:Zone.Identifier
+serenvi-handover.md:Zone.Identifier
