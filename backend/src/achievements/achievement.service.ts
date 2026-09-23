@@ -27,8 +27,21 @@ export class AchievementService {
    * Based on PERSONAL SALES (level1Sales) only - NOT referred/team sales
    * Achievements are unlocked when personal sales reach or exceed the milestone target
    * User manually claims rewards
+   *
+   * Delegates to syncAchievements (upsert-based, race-safe).
    */
   async checkAndClaimAchievements(distributorId: string): Promise<void> {
+    return this.syncAchievements(distributorId);
+  }
+
+  /**
+   * Reconcile unlocked achievements with current level1Sales:
+   * - unlock any milestone whose target is reached (upsert, no duplicates),
+   * - remove any UNCLAIMED achievement whose target is no longer reached
+   *   (happens after a refund reverses personal sales). Claimed rewards are
+   *   never removed.
+   */
+  async syncAchievements(distributorId: string): Promise<void> {
     try {
       const distributor = await this.prisma.distributor.findUnique({
         where: { id: distributorId },
@@ -38,36 +51,45 @@ export class AchievementService {
         throw new Error(`Distributor not found: ${distributorId}`);
       }
 
-      // Check each milestone based on PERSONAL SALES (level1Sales) only
+      const personalSales = distributor.level1Sales as Decimal;
+
       for (const milestone of ACHIEVEMENT_MILESTONES) {
-        // Only count personal sales, not referred revenue
-        // Check if distributor's personal sales meets this milestone
-        if (distributor.level1Sales.gte(new Decimal(milestone.salesTarget))) {
-          // Check if already unlocked
-          const alreadyUnlocked = await this.prisma.achievement.findUnique({
+        const target = new Decimal(milestone.salesTarget);
+        const reached = personalSales.gte(target);
+
+        if (reached) {
+          // upsert: concurrent sale processing can't create duplicates.
+          const created = await this.prisma.achievement.upsert({
             where: {
               distributorId_rankName: {
                 distributorId,
                 rankName: milestone.rank,
               },
             },
+            update: {}, // Never touch claimedAt here.
+            create: {
+              distributorId,
+              rankName: milestone.rank,
+              salesTarget: target,
+              rewardAmount: new Decimal(milestone.reward),
+              claimedAt: null, // User will claim manually
+            },
           });
-
-          if (!alreadyUnlocked) {
-            // Create achievement record but DON'T claim yet (claimedAt = null)
-            await this.prisma.achievement.create({
-              data: {
-                distributorId,
-                rankName: milestone.rank,
-                salesTarget: new Decimal(milestone.salesTarget),
-                rewardAmount: new Decimal(milestone.reward),
-                claimedAt: null, // User will claim manually
-              },
-            });
-
+          if (!created.claimedAt && created.createdAt.getTime() >= distributor.createdAt.getTime()) {
             this.logger.log(
               `✅ Achievement unlocked for ${distributor.name}: ${milestone.rank} ` +
-              `(Personal Sales: ₹${distributor.level1Sales} / Target: ₹${milestone.salesTarget})`,
+              `(Personal Sales: ₹${personalSales} / Target: ₹${target})`,
+            );
+          }
+        } else {
+          // Target no longer reached (refund reversal) — drop it only if
+          // the user never claimed it.
+          const removed = await this.prisma.achievement.deleteMany({
+            where: { distributorId, rankName: milestone.rank, claimedAt: null },
+          });
+          if (removed.count > 0) {
+            this.logger.log(
+              `↩️ Achievement ${milestone.rank} unclaimed progress reverted for ${distributor.name} (personal sales ₹${personalSales} < ₹${target})`,
             );
           }
         }
@@ -180,98 +202,110 @@ export class AchievementService {
    * Claim an achievement reward by rank name
    * Checks if achievement is unlocked (sales met) and not yet claimed
    */
+  // Rank ladder — claims may only move a distributor UP, never backward.
+  private static readonly RANK_ORDER = [
+    'Rookie',
+    'Influencer',
+    'Master',
+    'Legend',
+    'Icon',
+    'Titan',
+    'Global Leader',
+    'World Leader',
+    'Empire Leader',
+    'Global Icon',
+  ];
+
   async claimAchievementReward(
     distributorId: string,
     rankName: string,
   ): Promise<any> {
     try {
-      const distributor = await this.prisma.distributor.findUnique({
-        where: { id: distributorId },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        const distributor = await tx.distributor.findUnique({
+          where: { id: distributorId },
+        });
 
-      if (!distributor) {
-        throw new Error('Distributor not found');
-      }
+        if (!distributor) {
+          throw new Error('Distributor not found');
+        }
 
-      // Find the milestone
-      const milestone = ACHIEVEMENT_MILESTONES.find((m) => m.rank === rankName);
-      if (!milestone) {
-        throw new Error(`Achievement rank not found: ${rankName}`);
-      }
+        // Find the milestone
+        const milestone = ACHIEVEMENT_MILESTONES.find((m) => m.rank === rankName);
+        if (!milestone) {
+          throw new Error(`Achievement rank not found: ${rankName}`);
+        }
 
-      // Check if sales threshold is met
-      if (distributor.level1Sales.lt(new Decimal(milestone.salesTarget))) {
-        throw new Error(
-          `Sales target not met for ${rankName}. Need ₹${milestone.salesTarget}, you have ₹${distributor.level1Sales}`,
+        // Re-confirm the sales target on fresh data (a refund may have
+        // dropped volume after the achievement row was created).
+        if ((distributor.level1Sales as Decimal).lt(new Decimal(milestone.salesTarget))) {
+          throw new Error(
+            `Sales target not met for ${rankName}. Need ₹${milestone.salesTarget}, you have ₹${distributor.level1Sales}`,
+          );
+        }
+
+        // Atomic claim: exactly one concurrent caller flips claimedAt from
+        // null. Everyone else sees count 0 and gets "already claimed".
+        const claimed = await tx.achievement.updateMany({
+          where: { distributorId, rankName, claimedAt: null },
+          data: { claimedAt: new Date() },
+        });
+
+        if (claimed.count === 0) {
+          const exists = await tx.achievement.findUnique({
+            where: { distributorId_rankName: { distributorId, rankName } },
+            select: { id: true },
+          });
+          throw new Error(
+            exists
+              ? `Achievement already claimed: ${rankName}`
+              : `Achievement not found: ${rankName}`,
+          );
+        }
+
+        const achievement = await tx.achievement.findUnique({
+          where: { distributorId_rankName: { distributorId, rankName } },
+        });
+
+        // Rank never moves backward: keep the higher of current vs claimed.
+        const currentIdx = AchievementService.RANK_ORDER.indexOf(distributor.rank);
+        const claimedIdx = AchievementService.RANK_ORDER.indexOf(rankName);
+        const newRank =
+          claimedIdx > currentIdx ? rankName : distributor.rank;
+
+        // Award the reward
+        const rewardDecimal = new Decimal(milestone.reward);
+        const updated = await tx.distributor.update({
+          where: { id: distributorId },
+          data: {
+            walletBalance: { increment: rewardDecimal },
+            rank: newRank,
+          },
+        });
+
+        // Log transaction
+        await tx.walletTransaction.create({
+          data: {
+            distributorId,
+            type: 'ACHIEVEMENT_REWARD',
+            amount: rewardDecimal,
+            description: `Achievement reward: ${rankName}`,
+            referenceId: achievement!.id,
+          },
+        });
+
+        this.logger.log(
+          `${distributor.name} claimed ${rankName} achievement and earned ₹${milestone.reward}`,
         );
-      }
 
-      // Get the achievement record
-      const achievement = await this.prisma.achievement.findUnique({
-        where: {
-          distributorId_rankName: {
-            distributorId,
-            rankName,
-          },
-        },
+        return {
+          success: true,
+          message: `Successfully claimed ${rankName} achievement!`,
+          reward: milestone.reward,
+          newRank,
+          newWalletBalance: (updated.walletBalance as Decimal).toNumber(),
+        };
       });
-
-      if (!achievement) {
-        throw new Error(`Achievement not found: ${rankName}`);
-      }
-
-      if (achievement.claimedAt) {
-        throw new Error(`Achievement already claimed: ${rankName}`);
-      }
-
-      // Award the reward
-      const rewardDecimal = new Decimal(milestone.reward);
-
-      await this.prisma.distributor.update({
-        where: { id: distributorId },
-        data: {
-          walletBalance: {
-            increment: rewardDecimal,
-          },
-          rank: rankName, // Update rank
-        },
-      });
-
-      // Mark as claimed
-      await this.prisma.achievement.update({
-        where: {
-          distributorId_rankName: {
-            distributorId,
-            rankName,
-          },
-        },
-        data: {
-          claimedAt: new Date(),
-        },
-      });
-
-      // Log transaction
-      await this.prisma.walletTransaction.create({
-        data: {
-          distributorId,
-          type: 'ACHIEVEMENT_REWARD',
-          amount: rewardDecimal,
-          description: `Achievement reward: ${rankName}`,
-          referenceId: distributorId,
-        },
-      });
-
-      this.logger.log(
-        `${distributor.name} claimed ${rankName} achievement and earned ₹${milestone.reward}`,
-      );
-
-      return {
-        success: true,
-        message: `Successfully claimed ${rankName} achievement!`,
-        reward: milestone.reward,
-        newRank: rankName,
-        newWalletBalance: distributor.walletBalance.add(rewardDecimal).toNumber(),
-      };
     } catch (error) {
       this.logger.error(
         `Failed to claim achievement for distributor ${distributorId}:`,

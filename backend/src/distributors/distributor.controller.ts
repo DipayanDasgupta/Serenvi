@@ -46,6 +46,11 @@ export class DistributorController {
     return this.distributorService.getDashboard(distributorId);
   }
 
+  @Get(':id/reports')
+  async getReports(@Param('id') distributorId: string) {
+    return this.distributorService.getReports(distributorId);
+  }
+
   @Get(':id/team')
   async getTeam(@Param('id') distributorId: string) {
     return this.distributorService.getTeamAnalytics(distributorId);

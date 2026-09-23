@@ -52,6 +52,8 @@ model Distributor {
   totalSales            Decimal   @default(0) @db.Decimal(15, 2)
   level1Sales           Decimal   @default(0) @db.Decimal(15, 2) // Direct sales only (for achievement calculations)
   monthlySales          Decimal   @default(0) @db.Decimal(15, 2) // Monthly downline sales (resets 1st of month)
+  teamSales             Decimal   @default(0) @db.Decimal(15, 2) // Lifetime all-level (1-15) descendant sales, never reset
+  teamMonthlySales      Decimal   @default(0) @db.Decimal(15, 2) // Current-month all-level descendant sales
   monthlyResetDate      DateTime  @default(now()) // Tracks when monthly sales were last reset
   carryForwardSales     Decimal   @default(0) @db.Decimal(15, 2)
   walletBalance         Decimal   @default(0) @db.Decimal(15, 2)
@@ -174,6 +176,7 @@ model Sale {
   saleAmount      Decimal   @db.Decimal(15, 2)
   paymentMethod   String    // WALLET, CARD, UPI, BANK_TRANSFER
   orderStatus     String    @default("COMPLETED") // COMPLETED, PENDING, REFUNDED
+  idempotencyKey  String?   @unique // Client-supplied key: retries of the same purchase return the original sale
   
   commissions     Commission[]
   
@@ -198,9 +201,11 @@ model Commission {
   level             Int       // 1-15
   commissionAmount  Decimal   @db.Decimal(15, 2)
   commissionRate    Decimal   @db.Decimal(5, 2) // For audit trail
+  reversedAt        DateTime? // Set when the parent sale is refunded (row kept for audit)
   
   createdAt         DateTime  @default(now())
   
+  @@unique([saleId, level])
   @@index([distributorId])
   @@index([createdAt])
 }

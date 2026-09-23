@@ -347,6 +347,18 @@ export class AuthService {
   }
 
   private async addToMLMTree(sponsorId: string, distributorId: string) {
+    // Cycle guard: the sponsor must not be the distributor itself or one of
+    // its own descendants — that would loop commission payouts forever.
+    if (sponsorId === distributorId) {
+      throw new BadRequestException('A distributor cannot sponsor themselves');
+    }
+    const cycle = await this.prisma.mLMTreeNode.findFirst({
+      where: { ancestorId: distributorId, descendantId: sponsorId },
+      select: { id: true },
+    });
+    if (cycle) {
+      throw new BadRequestException('This sponsorship would create a circular relationship');
+    }
     // Add direct sponsorship (depth = 1)
     await this.prisma.mLMTreeNode.create({
       data: {
@@ -356,12 +368,13 @@ export class AuthService {
       },
     });
 
-    // Also add all ancestors of sponsor
+    // Also add all ancestors of sponsor (capped at commission depth 15)
     const sponsorAncestors = await this.prisma.mLMTreeNode.findMany({
       where: { descendantId: sponsorId },
     });
 
     for (const ancestor of sponsorAncestors) {
+      if (ancestor.depth + 1 > 15) continue;
       await this.prisma.mLMTreeNode.create({
         data: {
           ancestorId: ancestor.ancestorId,

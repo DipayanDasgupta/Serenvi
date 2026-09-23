@@ -3,6 +3,7 @@ import { PrismaService } from '../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as crypto from 'crypto';
+import { SALARY_TIERS as SALARY_TIER_TABLE } from '../salary/salary.service';
 import * as bcrypt from 'bcrypt';
 import * as nodemailer from 'nodemailer';
 
@@ -262,6 +263,18 @@ export class DistributorService {
   }
 
   private async addToMLMTree(sponsorId: string, distributorId: string) {
+    // Cycle guard: the sponsor must not be the distributor itself or one of
+    // its own descendants — that would loop commission payouts forever.
+    if (sponsorId === distributorId) {
+      throw new BadRequestException('A distributor cannot sponsor themselves');
+    }
+    const cycle = await this.prisma.mLMTreeNode.findFirst({
+      where: { ancestorId: distributorId, descendantId: sponsorId },
+      select: { id: true },
+    });
+    if (cycle) {
+      throw new BadRequestException('This sponsorship would create a circular relationship');
+    }
     await this.prisma.mLMTreeNode.create({
       data: { ancestorId: sponsorId, descendantId: distributorId, depth: 1 },
     });
@@ -269,6 +282,8 @@ export class DistributorService {
       where: { descendantId: sponsorId },
     });
     for (const ancestor of sponsorAncestors) {
+      // Commission depth is capped at 15 levels — deeper links are not stored.
+      if (ancestor.depth + 1 > 15) continue;
       await this.prisma.mLMTreeNode.create({
         data: {
           ancestorId: ancestor.ancestorId,
@@ -277,6 +292,195 @@ export class DistributorService {
         },
       });
     }
+  }
+
+  /**
+   * Full reporting bundle for one distributor (rule 10). Everything the
+   * dashboards need in a single call, all Decimal-serialised to numbers.
+   */
+  async getReports(distributorId: string) {
+    const distributor = await this.prisma.distributor.findUnique({
+      where: { id: distributorId },
+    });
+    if (!distributor) {
+      throw new BadRequestException('Distributor not found');
+    }
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const [
+      ownSalesAgg,
+      ownMonthlyAgg,
+      downlineMembers,
+      commissions,
+      achievements,
+      salaries,
+      incomeByType,
+      upline,
+    ] = await Promise.all([
+      // Own sales: COMPLETED only, lifetime + current month.
+      this.prisma.sale.aggregate({
+        _sum: { saleAmount: true },
+        _count: true,
+        where: { sellerId: distributorId, orderStatus: 'COMPLETED' },
+      }),
+      this.prisma.sale.aggregate({
+        _sum: { saleAmount: true },
+        _count: true,
+        where: {
+          sellerId: distributorId,
+          orderStatus: 'COMPLETED',
+          createdAt: { gte: monthStart },
+        },
+      }),
+      this.prisma.mLMTreeNode.findMany({
+        where: { ancestorId: distributorId, depth: { gte: 1, lte: 15 } },
+        orderBy: { depth: 'asc' },
+        include: {
+          descendant: {
+            select: { id: true, name: true, totalSales: true, teamSales: true },
+          },
+        },
+      }),
+      this.prisma.commission.findMany({
+        where: { distributorId, reversedAt: null },
+        select: { level: true, commissionAmount: true, createdAt: true },
+      }),
+      this.prisma.achievement.findMany({
+        where: { distributorId },
+        orderBy: { salesTarget: 'asc' },
+      }),
+      this.prisma.leadershipSalary.findMany({
+        where: { distributorId },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      }),
+      this.prisma.walletTransaction.groupBy({
+        by: ['type'],
+        where: { distributorId },
+        _sum: { amount: true },
+      }),
+      this.prisma.mLMTreeNode.findMany({
+        where: { descendantId: distributorId, depth: { lte: 15 } },
+        orderBy: { depth: 'asc' },
+        include: { ancestor: { select: { id: true, name: true, rank: true } } },
+      }),
+    ]);
+
+    // Commission totals grouped by level.
+    const commissionByLevel = new Map<number, Decimal>();
+    let commissionTotal = new Decimal(0);
+    for (const c of commissions) {
+      commissionByLevel.set(
+        c.level,
+        (commissionByLevel.get(c.level) ?? new Decimal(0)).plus(c.commissionAmount as Decimal),
+      );
+      commissionTotal = commissionTotal.plus(c.commissionAmount as Decimal);
+    }
+
+    // Team sales grouped by level 1-15.
+    const teamByLevel: Array<Record<string, number>> = [];
+    for (let level = 1; level <= 15; level++) {
+      const members = downlineMembers.filter((m) => m.depth === level);
+      if (members.length === 0) continue;
+      const own = members.reduce(
+        (s: Decimal, m: any) => s.plus(m.descendant.totalSales as Decimal),
+        new Decimal(0),
+      );
+      const team = members.reduce(
+        (s: Decimal, m: any) => s.plus(m.descendant.teamSales as Decimal),
+        new Decimal(0),
+      );
+      teamByLevel.push({
+        level,
+        memberCount: members.length,
+        ownSales: own.toNumber(),
+        teamSales: team.toNumber(),
+        totalSales: own.plus(team).toNumber(),
+      });
+    }
+
+    // Wallet income by type (credits positive, debits negative).
+    const walletByType: Record<string, number> = {};
+    for (const row of incomeByType) {
+      walletByType[row.type] = (row._sum.amount as Decimal | null)?.toNumber() ?? 0;
+    }
+
+    const tierIndex = distributor.currentLeadershipRank;
+    const tier = tierIndex !== null ? SALARY_TIER_TABLE[tierIndex] : null;
+
+    return {
+      distributorId,
+      // Sales
+      ownSales: (ownSalesAgg._sum.saleAmount as Decimal | null)?.toNumber() ?? 0,
+      ownOrderCount: ownSalesAgg._count,
+      ownMonthlySales: (ownMonthlyAgg._sum.saleAmount as Decimal | null)?.toNumber() ?? 0,
+      ownMonthlyOrderCount: ownMonthlyAgg._count,
+      personalSales: (distributor.level1Sales as Decimal).toNumber(),
+      teamSales: (distributor.teamSales as Decimal).toNumber(),
+      monthlyTeamSales: (distributor.teamMonthlySales as Decimal).toNumber(),
+      // Team structure
+      directDownlineCount: downlineMembers.filter((m) => m.depth === 1).length,
+      totalTeamCount: downlineMembers.length,
+      teamSalesByLevel: teamByLevel,
+      uplineChain: upline.map((n: any) => ({
+        level: n.depth,
+        id: n.ancestor.id,
+        name: n.ancestor.name,
+        rank: n.ancestor.rank,
+      })),
+      // Commissions
+      commissionTotal: commissionTotal.toNumber(),
+      commissionByLevel: [...commissionByLevel.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([level, amount]) => ({ level, amount: amount.toNumber() })),
+      // Achievements
+      achievementProgress: {
+        personalSales: (distributor.level1Sales as Decimal).toNumber(),
+        rank: distributor.rank,
+        milestones: achievements.map((a) => ({
+          rankName: a.rankName,
+          salesTarget: (a.salesTarget as Decimal).toNumber(),
+          rewardAmount: (a.rewardAmount as Decimal).toNumber(),
+          claimed: a.claimedAt !== null,
+          claimedAt: a.claimedAt,
+          progressPercent: Math.min(
+            100,
+            Math.round(
+              ((distributor.level1Sales as Decimal).toNumber() /
+                (a.salesTarget as Decimal).toNumber()) *
+                100,
+            ),
+          ),
+        })),
+      },
+      // Salary
+      salary: {
+        currentTier: tier
+          ? {
+              threshold: tier.monthlysSalesThreshold,
+              poolPercentage: tier.poolPercentage,
+            }
+          : null,
+        pendingSalary: (distributor.currentLeadershipSalary as Decimal).toNumber(),
+        paidByMonth: salaries.map((s) => ({
+          month: s.month,
+          year: s.year,
+          rank: s.rank,
+          amount: (s.salaryAmount as Decimal).toNumber(),
+          poolPercentage: (s.poolPercentage as Decimal).toNumber(),
+        })),
+        totalPaid: salaries
+          .reduce((s: Decimal, r) => s.plus(r.salaryAmount as Decimal), new Decimal(0))
+          .toNumber(),
+      },
+      // Wallet
+      wallet: {
+        balance: (distributor.walletBalance as Decimal).toNumber(),
+        byType: walletByType,
+      },
+    };
   }
 
   async regenerateReferralCode(distributorId: string) {    const distributor = await this.prisma.distributor.findUnique({
@@ -392,8 +596,13 @@ export class DistributorService {
       return {
         name: distributor.name,
         rank: distributor.rank,
-        personalSales: personalSalesNum, // Level 1 downline sales
-        totalSales: totalSalesNum, // Personal + deeper downline
+        ownSales: (distributor.totalSales as Decimal).toNumber(), // sales the distributor made
+        personalSales: personalSalesNum, // Level 1 downline sales (achievement basis)
+        teamSales: (distributor.teamSales as Decimal).toNumber(), // all-level lifetime team volume
+        monthlyTeamSales: (distributor.teamMonthlySales as Decimal).toNumber(), // current month, all levels
+        totalSales: totalSalesNum, // Personal + deeper downline (compat alias)
+        teamCount: downlineMembers.length,
+        directDownlineCount: level1Members.length,
         walletBalance: (distributor.walletBalance as Decimal).toNumber(),
         monthlySales: (distributor.monthlySales as Decimal).toNumber(), // Monthly downline sales (resets 1st of month)
         totalCommissionEarned: totalCommissionEarned._sum.commissionAmount?.toNumber() || 0,
@@ -450,48 +659,61 @@ export class DistributorService {
    * Get detailed team sales breakdown by level (Max 15 levels)
    */
   async getTeamSalesByLevel(distributorId: string) {
-    const levelData = [];
+    const levelData: Array<{
+      level: number;
+      memberCount: number;
+      /** Sales made BY this level's members themselves (their own purchases). */
+      ownSales: number;
+      /** Sales generated further down inside this level (their own team). */
+      teamSales: number;
+      /** ownSales + teamSales = the full volume this level contributed. */
+      totalSales: number;
+      members: Array<Record<string, unknown>>;
+    }> = [];
 
-    // Get downline by depth (level)
-    for (let depth = 1; depth <= 15; depth++) {
-      const members = await this.prisma.mLMTreeNode.findMany({
-        where: {
-          ancestorId: distributorId,
-          depth,
-        },
-        include: {
-          descendant: { 
-            select: { 
-              id: true, 
-              name: true, 
-              totalSales: true,
-              referralCode: true,
-            },
+    // One query for the whole downline, then bucket by depth.
+    const downline = await this.prisma.mLMTreeNode.findMany({
+      where: { ancestorId: distributorId, depth: { gte: 1, lte: 15 } },
+      orderBy: { depth: 'asc' },
+      include: {
+        descendant: {
+          select: {
+            id: true,
+            name: true,
+            totalSales: true,
+            teamSales: true,
+            referralCode: true,
           },
         },
-      });
+      },
+    });
 
+    for (let depth = 1; depth <= 15; depth++) {
+      const members = downline.filter((m) => m.depth === depth);
       if (members.length === 0) continue;
 
-      // Get total sales for this level
-      const levelTotalSales = members.reduce((sum: Decimal, m: any) => 
-        sum.plus(m.descendant.totalSales), 
-        new Decimal(0)
+      const ownTotal = members.reduce(
+        (sum: Decimal, m: any) => sum.plus(m.descendant.totalSales as Decimal),
+        new Decimal(0),
       );
-
-      // Get individual member details with their sales
-      const memberDetails = members.map((m: any) => ({
-        id: m.descendant.id,
-        name: m.descendant.name,
-        referralCode: m.descendant.referralCode,
-        sales: m.descendant.totalSales.toNumber(),
-      }));
+      const teamTotal = members.reduce(
+        (sum: Decimal, m: any) => sum.plus(m.descendant.teamSales as Decimal),
+        new Decimal(0),
+      );
 
       levelData.push({
         level: depth,
         memberCount: members.length,
-        totalSales: levelTotalSales.toNumber(),
-        members: memberDetails,
+        ownSales: ownTotal.toNumber(),
+        teamSales: teamTotal.toNumber(),
+        totalSales: ownTotal.plus(teamTotal).toNumber(),
+        members: members.map((m: any) => ({
+          id: m.descendant.id,
+          name: m.descendant.name,
+          referralCode: m.descendant.referralCode,
+          ownSales: m.descendant.totalSales.toNumber(),
+          teamSales: m.descendant.teamSales.toNumber(),
+        })),
       });
     }
 

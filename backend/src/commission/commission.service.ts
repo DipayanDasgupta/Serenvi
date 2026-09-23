@@ -2,25 +2,18 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
+import {
+  COMMISSION_RATES,
+  COMMISSION_TOTAL_PERCENT,
+  MAX_COMMISSION_DEPTH,
+  buildUplineChain,
+  chainToUplineIds,
+  commissionForLevel,
+} from '../mlm/mlm-rules';
 
-// MLM Commission Structure - 15 levels with 55% total payout
-const COMMISSION_STRUCTURE: Record<number, number> = {
-  1: 25.0,
-  2: 7.0,
-  3: 4.5,
-  4: 2.5,
-  5: 2.0,
-  6: 2.0,
-  7: 1.8,
-  8: 1.6,
-  9: 1.4,
-  10: 1.2,
-  11: 1.0,
-  12: 1.0,
-  13: 1.0,
-  14: 1.0,
-  15: 1.0,
-};
+// The single source of truth for the rate table lives in mlm-rules.ts and is
+// covered by unit tests (which assert the total is 54%, not 55%).
+const COMMISSION_STRUCTURE: Record<number, number> = COMMISSION_RATES as Record<number, number>;
 
 @Injectable()
 export class CommissionService {
@@ -43,18 +36,27 @@ export class CommissionService {
     const db = tx ?? this.prisma;
     try {
       this.logger.log(`[COMMISSION] Starting distribution for sale ${saleId}, seller ${sellerId}, amount ₹${saleAmount}`);
-      
+
+      // Idempotency: a sale distributes commissions exactly once. If any
+      // rows already exist for this sale (retry / double-processing), skip.
+      const alreadyPaid = await db.commission.findFirst({
+        where: { saleId },
+        select: { id: true },
+      });
+      if (alreadyPaid) {
+        this.logger.warn(`[COMMISSION] Sale ${saleId} already distributed — skipping (idempotent)`);
+        return;
+      }
+
       // Get upline chain (up to 15 levels)
-      const uplineChain = await this.getUplineChain(sellerId, 15);
+      const uplineChain = await this.getUplineChain(sellerId, MAX_COMMISSION_DEPTH);
       this.logger.log(`[COMMISSION] Upline chain found: ${JSON.stringify(uplineChain)}`);
 
       // Distribute commission to each level
-      for (let level = 1; level <= 15; level++) {
-        const uplineId = uplineChain[level];
+      for (let level = 1; level <= MAX_COMMISSION_DEPTH; level++) {
+        const uplineId = uplineChain.get(level);
         const commissionRate = COMMISSION_STRUCTURE[level];
-        const commissionAmount = saleAmount
-          .mul(new Decimal(commissionRate))
-          .div(100);
+        const commissionAmount = commissionForLevel(saleAmount, level);
 
         if (uplineId) {
           this.logger.log(`[COMMISSION] Level ${level}: Distributing ₹${commissionAmount} to ${uplineId}`);
@@ -100,14 +102,23 @@ export class CommissionService {
       }
 
       this.logger.log(
-        `[COMMISSION] ✓ Distribution COMPLETED for sale ${saleId}. Total distributed: ₹${saleAmount
-          .mul(55)
-          .div(100)}`,
+        `[COMMISSION] ✓ Distribution COMPLETED for sale ${saleId}. ` +
+          `Ceiling at ${COMMISSION_TOTAL_PERCENT}%: ₹${saleAmount
+            .mul(COMMISSION_TOTAL_PERCENT)
+            .div(100)}`,
       );
     } catch (error) {
       this.logger.error(`Failed to distribute commission for sale ${saleId}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Upline distributor IDs ordered L1 (direct sponsor) outward, max 15.
+   */
+  async getUplineIds(distributorId: string, maxDepth = MAX_COMMISSION_DEPTH): Promise<string[]> {
+    const chain = await this.getUplineChain(distributorId, maxDepth);
+    return chainToUplineIds(chain);
   }
 
   /**
@@ -117,23 +128,20 @@ export class CommissionService {
   private async getUplineChain(
     distributorId: string,
     maxDepth: number,
-  ): Promise<Record<number, string>> {
-    const chain: Record<number, string> = {};
-
+  ): Promise<Map<number, string>> {
     const ancestors = await this.prisma.mLMTreeNode.findMany({
       where: {
         descendantId: distributorId,
         depth: { lte: maxDepth },
       },
       orderBy: { depth: 'asc' },
-      select: { ancestorId: true, depth: true },
+      select: { ancestorId: true, descendantId: true, depth: true },
     });
 
-    ancestors.forEach((node: any) => {
-      chain[node.depth] = node.ancestorId;
-    });
-
-    return chain;
+    return buildUplineChain(
+      ancestors as unknown as Array<{ ancestorId: string; descendantId: string; depth: number }>,
+      maxDepth,
+    );
   }
 
   /**
@@ -141,7 +149,7 @@ export class CommissionService {
    */
   async getCommissionSummary(distributorId: string) {
     const commissions = await this.prisma.commission.findMany({
-      where: { distributorId },
+      where: { distributorId, reversedAt: null },
       select: {
         level: true,
         commissionAmount: true,
@@ -176,30 +184,34 @@ export class CommissionService {
   }
 
   /**
-   * Get commission structure info
+   * Get commission structure info, including the audited total.
    */
   getCommissionStructure() {
-    return COMMISSION_STRUCTURE;
+    return {
+      rates: COMMISSION_STRUCTURE,
+      totalPercentage: COMMISSION_TOTAL_PERCENT,
+      maxDepth: MAX_COMMISSION_DEPTH,
+    };
   }
 
   /**
-   * Validate commission calculations
+   * Validate commission calculations and return the maximum distributable
+   * amount across all 15 levels.
    */
   validateCommissionCalculations(saleAmount: Decimal): Decimal {
     let totalDistributed = new Decimal(0);
 
-    for (let level = 1; level <= 15; level++) {
+    for (let level = 1; level <= MAX_COMMISSION_DEPTH; level++) {
       const rate = COMMISSION_STRUCTURE[level];
       totalDistributed = totalDistributed.plus(new Decimal(rate));
     }
 
-    if (!totalDistributed.equals(55)) {
+    if (!totalDistributed.equals(COMMISSION_TOTAL_PERCENT)) {
       throw new BadRequestException(
-        `Invalid commission structure: total is ${totalDistributed}% instead of 55%`,
+        `Invalid commission structure: total is ${totalDistributed}% instead of ${COMMISSION_TOTAL_PERCENT}%`,
       );
     }
 
-    const totalToDistribute = saleAmount.mul(55).div(100);
-    return totalToDistribute;
+    return saleAmount.mul(COMMISSION_TOTAL_PERCENT).div(100);
   }
 }

@@ -245,17 +245,43 @@ export class WalletService {
     const fee = feePercent.greaterThan(20) ? feePercent : new Decimal(20);
     const netAmount = amountDecimal.minus(fee);
 
-    // Create withdrawal request
-    const withdrawal = await this.prisma.withdrawalRequest.create({
-      data: {
-        distributorId,
-        amount: amountDecimal,
-        fee,
-        bankAccount,
-        bankIFSC,
-        accountHolder,
-        status: 'PENDING',
-      },
+    // Reserve immediately: the requested amount leaves the available balance
+    // NOW, so concurrent pending requests can never overdraw the same funds.
+    // The decrement is CONDITIONAL on the balance still covering the amount —
+    // a single atomic UPDATE, so two simultaneous requests cannot both pass a
+    // read-then-write check.
+    const withdrawal = await this.prisma.$transaction(async (tx) => {
+      const reserved = await tx.distributor.updateMany({
+        where: {
+          id: distributorId,
+          walletBalance: { gte: amountDecimal },
+        },
+        data: { walletBalance: { decrement: amountDecimal } },
+      });
+      if (reserved.count === 0) {
+        throw new BadRequestException('Insufficient wallet balance');
+      }
+      const created = await tx.withdrawalRequest.create({
+        data: {
+          distributorId,
+          amount: amountDecimal,
+          fee,
+          bankAccount,
+          bankIFSC,
+          accountHolder,
+          status: 'PENDING',
+        },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          distributorId,
+          type: 'WITHDRAWAL',
+          amount: amountDecimal.negated(),
+          description: `Withdrawal reserved (net ₹${netAmount}, fee ₹${fee})`,
+          referenceId: created.id,
+        },
+      });
+      return created;
     });
 
     this.logger.log(
@@ -310,62 +336,62 @@ export class WalletService {
    * Approve withdrawal request
    */
   async approveWithdrawal(withdrawalId: string): Promise<any> {
-    const withdrawal = await this.prisma.withdrawalRequest.findUnique({
-      where: { id: withdrawalId },
-    });
-
-    if (!withdrawal) {
-      throw new BadRequestException('Withdrawal not found');
-    }
-
-    if (withdrawal.status !== 'PENDING') {
-      throw new BadRequestException(
-        `Cannot approve withdrawal with status: ${withdrawal.status}`,
-      );
-    }
-
-    // Atomic: balance debit + ledger row + status flip commit together.
-    // The ledger row MUST be the negated full amount (money left the wallet);
-    // a positive entry here would corrupt every balance-from-ledger computation.
+    // Idempotent + race-safe: the status flip and the money movement happen
+    // in ONE transaction. Concurrent approvers: exactly one flips PENDING→
+    // APPROVED; the other sees count 0 and gets the already-approved record.
     const updated = await this.prisma.$transaction(async (tx) => {
-      // Deduct from wallet
-      await tx.distributor.update({
-        where: { id: withdrawal.distributorId },
-        data: {
-          walletBalance: {
-            decrement: withdrawal.amount,
-          },
-        },
+      const flipped = await tx.withdrawalRequest.updateMany({
+        where: { id: withdrawalId, status: 'PENDING' },
+        data: { status: 'APPROVED', processedAt: new Date() },
       });
-
-      // Log transaction
-      const netAmount = withdrawal.amount.minus(withdrawal.fee);
-      await tx.walletTransaction.create({
-        data: {
-          distributorId: withdrawal.distributorId,
-          type: 'WITHDRAWAL',
-          amount: (withdrawal.amount as Decimal).negated(),
-          description: `Withdrawal approved (net ₹${netAmount}, fee ₹${withdrawal.fee})`,
-          referenceId: withdrawalId,
-        },
-      });
-
-      // Update withdrawal status
-      return tx.withdrawalRequest.update({
+      if (flipped.count === 0) {
+        const current = await tx.withdrawalRequest.findUnique({
+          where: { id: withdrawalId },
+        });
+        if (current?.status === 'APPROVED') {
+          return current; // Retry after success — return, don't double-pay.
+        }
+        throw new BadRequestException(
+          current
+            ? `Cannot approve withdrawal with status: ${current.status}`
+            : 'Withdrawal not found',
+        );
+      }
+      const withdrawal = await tx.withdrawalRequest.findUniqueOrThrow({
         where: { id: withdrawalId },
-        data: {
-          status: 'APPROVED',
-          processedAt: new Date(),
-        },
       });
+
+      // New flow reserves at request time (WITHDRAWAL row already exists).
+      // Legacy PENDING rows (created before reservation) still need the debit.
+      const reserved = await tx.walletTransaction.findFirst({
+        where: { referenceId: withdrawalId, type: 'WITHDRAWAL' },
+        select: { id: true },
+      });
+      if (!reserved) {
+        await tx.distributor.update({
+          where: { id: withdrawal.distributorId },
+          data: { walletBalance: { decrement: withdrawal.amount } },
+        });
+        const netAmount = (withdrawal.amount as Decimal).minus(withdrawal.fee as Decimal);
+        await tx.walletTransaction.create({
+          data: {
+            distributorId: withdrawal.distributorId,
+            type: 'WITHDRAWAL',
+            amount: (withdrawal.amount as Decimal).negated(),
+            description: `Withdrawal approved (net ₹${netAmount}, fee ₹${withdrawal.fee})`,
+            referenceId: withdrawalId,
+          },
+        });
+      }
+      return withdrawal;
     });
 
     this.logger.log(`Withdrawal ${withdrawalId} approved`);
 
     return {
       ...updated,
-      amount: updated.amount.toNumber(),
-      fee: updated.fee.toNumber(),
+      amount: (updated.amount as Decimal).toNumber(),
+      fee: (updated.fee as Decimal).toNumber(),
     };
   }
 
@@ -376,35 +402,58 @@ export class WalletService {
     withdrawalId: string,
     rejectionReason: string,
   ): Promise<any> {
-    const withdrawal = await this.prisma.withdrawalRequest.findUnique({
-      where: { id: withdrawalId },
-    });
-
-    if (!withdrawal) {
-      throw new BadRequestException('Withdrawal not found');
-    }
-
-    if (withdrawal.status !== 'PENDING') {
-      throw new BadRequestException(
-        `Cannot reject withdrawal with status: ${withdrawal.status}`,
-      );
-    }
-
-    const updated = await this.prisma.withdrawalRequest.update({
-      where: { id: withdrawalId },
-      data: {
-        status: 'REJECTED',
-        rejectionReason,
-        processedAt: new Date(),
-      },
+    // Atomic + idempotent: flip status, and release the reservation IFF one
+    // was taken (WITHDRAWAL row exists). Legacy rows without a reservation
+    // just flip status with no money movement.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const flipped = await tx.withdrawalRequest.updateMany({
+        where: { id: withdrawalId, status: 'PENDING' },
+        data: { status: 'REJECTED', rejectionReason, processedAt: new Date() },
+      });
+      if (flipped.count === 0) {
+        const current = await tx.withdrawalRequest.findUnique({
+          where: { id: withdrawalId },
+        });
+        if (current?.status === 'REJECTED') {
+          return current; // Retry after success.
+        }
+        throw new BadRequestException(
+          current
+            ? `Cannot reject withdrawal with status: ${current.status}`
+            : 'Withdrawal not found',
+        );
+      }
+      const withdrawal = await tx.withdrawalRequest.findUniqueOrThrow({
+        where: { id: withdrawalId },
+      });
+      const reserved = await tx.walletTransaction.findFirst({
+        where: { referenceId: withdrawalId, type: 'WITHDRAWAL' },
+        select: { id: true },
+      });
+      if (reserved) {
+        await tx.distributor.update({
+          where: { id: withdrawal.distributorId },
+          data: { walletBalance: { increment: withdrawal.amount } },
+        });
+        await tx.walletTransaction.create({
+          data: {
+            distributorId: withdrawal.distributorId,
+            type: 'REFUND',
+            amount: withdrawal.amount as Decimal,
+            description: `Withdrawal reservation released (${withdrawalId})`,
+            referenceId: withdrawalId,
+          },
+        });
+      }
+      return withdrawal;
     });
 
     this.logger.log(`Withdrawal ${withdrawalId} rejected: ${rejectionReason}`);
 
     return {
       ...updated,
-      amount: updated.amount.toNumber(),
-      fee: updated.fee.toNumber(),
+      amount: (updated.amount as Decimal).toNumber(),
+      fee: (updated.fee as Decimal).toNumber(),
     };
   }
 

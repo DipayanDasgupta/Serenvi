@@ -172,18 +172,20 @@ export class SalesService {
    * Get sales statistics
    */
   async getSalesStats(sellerId: string) {
+    // COMPLETED only: pending/cancelled/refunded sales never count.
     const [totalSales, monthlySales, avgSale, totalCommission] =
       await Promise.all([
         this.prisma.sale.aggregate({
           _sum: { saleAmount: true },
           _count: true,
-          where: { sellerId },
+          where: { sellerId, orderStatus: 'COMPLETED' },
         }),
         this.prisma.sale.aggregate({
           _sum: { saleAmount: true },
           _count: true,
           where: {
             sellerId,
+            orderStatus: 'COMPLETED',
             createdAt: {
               gte: new Date(new Date().setDate(1)),
             },
@@ -191,11 +193,11 @@ export class SalesService {
         }),
         this.prisma.sale.aggregate({
           _avg: { saleAmount: true },
-          where: { sellerId },
+          where: { sellerId, orderStatus: 'COMPLETED' },
         }),
         this.prisma.commission.aggregate({
           _sum: { commissionAmount: true },
-          where: { distributorId: sellerId },
+          where: { distributorId: sellerId, reversedAt: null },
         }),
       ]);
 
@@ -250,6 +252,7 @@ export class SalesService {
     productId: string,
     quantity: number,
     paymentMethod: string,
+    idempotencyKey?: string,
   ) {
     if (!paymentMethod || paymentMethod.toUpperCase() !== 'WALLET') {
       throw new BadRequestException('Payments are wallet-only. Please top up your wallet first.');
@@ -281,6 +284,19 @@ export class SalesService {
     // Calculate purchase amount
     const purchaseAmount = product.price.mul(new Decimal(quantity));
 
+    // Idempotency: a retried purchase with the same key returns the original
+    // sale instead of charging twice.
+    if (idempotencyKey) {
+      const existing = await this.prisma.sale.findUnique({
+        where: { idempotencyKey },
+        select: { id: true },
+      });
+      if (existing) {
+        this.logger.warn(`[PURCHASE] Duplicate key ${idempotencyKey} — returning sale ${existing.id}`);
+        return this.getPurchaseResult(existing.id);
+      }
+    }
+
     // Wallet-only: balance must cover the purchase
     if (buyer.walletBalance.lessThan(purchaseAmount)) {
       throw new BadRequestException('Insufficient wallet balance. Please deposit funds first.');
@@ -308,6 +324,7 @@ export class SalesService {
           saleAmount: purchaseAmount,
           paymentMethod,
           orderStatus: 'COMPLETED',
+          idempotencyKey: idempotencyKey || undefined,
         },
       });
 
@@ -359,7 +376,24 @@ export class SalesService {
         },
       });
 
-      // 4. Commission distribution joins the same transaction: either the
+      // 4. Team metrics for EVERY qualifying upline (levels 1-15): lifetime
+      // teamSales plus current-month teamMonthlySales. The sponsor additionally
+      // got personal level1Sales/monthlySales in step 1.6.
+      const uplineIds = await this.commissionService.getUplineIds(buyerId, 15);
+      for (const uplineId of uplineIds) {
+        await tx.distributor.update({
+          where: { id: uplineId },
+          data: {
+            teamSales: { increment: purchaseAmount },
+            teamMonthlySales: { increment: purchaseAmount },
+          },
+        });
+      }
+      if (uplineIds.length > 0) {
+        this.logger.log(`[PURCHASE] ✓ Team metrics +₹${purchaseAmount} for ${uplineIds.length} upline(s)`);
+      }
+
+      // 5. Commission distribution joins the same transaction: either the
       // whole purchase (debit + commissions + sales counters) commits, or
       // nothing does. A failed purchase surfaces as an error to retry —
       // never as a half-written ledger.
@@ -372,6 +406,15 @@ export class SalesService {
 
     // Note: Leadership salary is now distributed automatically on the 1st of each month
     // based on monthly sales tiers, not in real-time
+
+    // 4.5. Recalculate salary eligibility (rule 3.12) so currentLeadershipSalary /
+    // currentLeadershipRank reflect the sale immediately. Wallet credit still
+    // only happens at month end.
+    try {
+      await this.salaryService.recalculateAfterSale();
+    } catch (salaryError) {
+      this.logger.error(`[PURCHASE] ✗ Salary recalculation FAILED:`, salaryError);
+    }
 
     // 5. Check and award achievements (non-money: best-effort after commit).
     // Check the buyer AND the sponsor whose team volume just moved.
@@ -387,16 +430,35 @@ export class SalesService {
       `[PURCHASE] ✓ Product purchase: ${quantity}x ${product.name} by ${buyer.name} for ₹${purchaseAmount} via ${paymentMethod}`,
     );
 
+    return this.getPurchaseResult(sale.id);
+  }
+
+  /**
+   * Shape a completed sale for API responses (also used for idempotent
+   * replays: same key returns the original purchase result).
+   */
+  private async getPurchaseResult(saleId: string) {
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: {
+        seller: { select: { id: true, name: true } },
+        product: { select: { id: true, name: true, price: true } },
+      },
+    });
+    if (!sale) {
+      throw new BadRequestException('Sale not found');
+    }
+    const amount = sale.saleAmount as Decimal;
     return {
       id: sale.id,
-      buyer: { id: buyer.id, name: buyer.name },
-      product: { id: product.id, name: product.name, price: product.price.toNumber() },
-      quantity,
-      totalAmount: purchaseAmount.toNumber(),
-      paymentMethod,
-      status: 'COMPLETED',
+      buyer: { id: sale.seller.id, name: sale.seller.name },
+      product: { id: sale.product.id, name: sale.product.name, price: (sale.product.price as Decimal).toNumber() },
+      quantity: sale.quantity,
+      totalAmount: amount.toNumber(),
+      paymentMethod: sale.paymentMethod,
+      status: sale.orderStatus,
       createdAt: sale.createdAt,
-      message: `✅ Successfully purchased ${quantity}x ${product.name} for ₹${purchaseAmount.toNumber()}`,
+      message: `✅ Successfully purchased ${sale.quantity}x ${sale.product.name} for ₹${amount.toNumber()}`,
     };
   }
 

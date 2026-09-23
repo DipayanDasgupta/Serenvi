@@ -21,6 +21,7 @@ export class SalesController {
       dto.productId,
       dto.quantity,
       dto.paymentMethod,
+      dto.idempotencyKey,
     );
   }
 

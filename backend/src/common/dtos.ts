@@ -183,6 +183,10 @@ export class CreateSaleDto {
 
   @IsString()
   paymentMethod!: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }
 
 // Withdrawal DTOs

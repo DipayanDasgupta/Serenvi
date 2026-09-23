@@ -1,11 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { AchievementService } from '../achievements/achievement.service';
+import { SalaryService } from '../salary/salary.service';
+import { Decimal } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private achievementService: AchievementService,
+    private salaryService: SalaryService,
+  ) {}
 
   /**
    * Get all users with their distributor details
@@ -82,13 +89,176 @@ export class AdminService {
   /**
    * Update order status (e.g., PENDING -> SHIPPED -> DELIVERED)
    */
+  /**
+   * Update order status. Moving a COMPLETED sale to REFUNDED runs the full
+   * compensating reversal (rule 9) atomically: stock, wallet, sales metrics,
+   * commissions, achievements and salary eligibility.
+   */
   async updateOrderStatus(orderId: string, status: string) {
-    const sale = await this.prisma.sale.update({
+    const normalized = String(status || '').toUpperCase();
+    const allowed = ['COMPLETED', 'PENDING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'];
+    if (!allowed.includes(normalized)) {
+      throw new BadRequestException(`Invalid order status: ${status}`);
+    }
+
+    const sale = await this.prisma.sale.findUnique({
       where: { id: orderId },
-      data: { orderStatus: status },
+      include: { product: { select: { id: true, type: true } } },
     });
-    this.logger.log(`Order ${orderId} status updated to ${status}`);
-    return sale;
+    if (!sale) {
+      throw new BadRequestException('Order not found');
+    }
+    if (sale.orderStatus === normalized) {
+      return sale; // Idempotent retry.
+    }
+    if (normalized === 'REFUNDED' && sale.orderStatus !== 'COMPLETED') {
+      throw new BadRequestException(
+        `Only COMPLETED sales can be refunded (current: ${sale.orderStatus})`,
+      );
+    }
+
+    if (normalized !== 'REFUNDED') {
+      const updated = await this.prisma.sale.update({
+        where: { id: orderId },
+        data: { orderStatus: normalized },
+      });
+      this.logger.log(`Order ${orderId} status updated to ${normalized}`);
+      return updated;
+    }
+
+    // --- Refund reversal (all-or-nothing) ---
+    const amount = sale.saleAmount as Decimal;
+    const sellerId = sale.sellerId;
+
+    const refunded = await this.prisma.$transaction(async (tx) => {
+      // 1. Mark sale REFUNDED first: flips COMPLETED→REFUNDED so this sale no
+      //    longer qualifies for any COMPLETED-only calculation.
+      const updated = await tx.sale.update({
+        where: { id: orderId },
+        data: { orderStatus: 'REFUNDED' },
+      });
+
+      // 2. Restore physical stock.
+      if (sale.product.type === 'PHYSICAL') {
+        await tx.product.update({
+          where: { id: sale.productId },
+          data: { stockQuantity: { increment: sale.quantity } },
+        });
+      }
+
+      // 3. Reverse buyer purchase accounting (refund the wallet).
+      await tx.distributor.update({
+        where: { id: sellerId },
+        data: { walletBalance: { increment: amount } },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: sellerId,
+          type: 'REFUND',
+          amount,
+          description: `Refund for ${sale.quantity}x ${sale.productId}`,
+          referenceId: orderId,
+        },
+      });
+
+      // 4. Reverse seller/team sales metrics.
+      await tx.distributor.update({
+        where: { id: sellerId },
+        data: { totalSales: { decrement: amount } },
+      });
+      const sponsor = await tx.distributor.findUnique({
+        where: { id: sellerId },
+        select: { sponsorId: true },
+      });
+      if (sponsor?.sponsorId) {
+        await tx.distributor.update({
+          where: { id: sponsor.sponsorId },
+          data: {
+            level1Sales: { decrement: amount },
+            monthlySales: { decrement: amount },
+          },
+        });
+      }
+      // Every upline's lifetime + monthly team metrics roll back.
+      const ancestors = await tx.mLMTreeNode.findMany({
+        where: { descendantId: sellerId, depth: { lte: 15 } },
+        select: { ancestorId: true },
+      });
+      for (const { ancestorId } of ancestors) {
+        await tx.distributor.update({
+          where: { id: ancestorId },
+          data: {
+            teamSales: { decrement: amount },
+            teamMonthlySales: { decrement: amount },
+          },
+        });
+      }
+
+      // 5. Claw back commissions. If the recipient can absorb it, debit their
+      //    wallet (balance may go negative when already withdrawn); otherwise
+      //    flip the commission to reversed and keep it as a receivable.
+      const commissions = await tx.commission.findMany({
+        where: { saleId: orderId, reversedAt: null },
+      });
+      for (const commission of commissions) {
+        const recipient = await tx.distributor.findUnique({
+          where: { id: commission.distributorId },
+          select: { walletBalance: true },
+        });
+        const bal = (recipient?.walletBalance as Decimal) ?? new Decimal(0);
+        const amt = commission.commissionAmount as Decimal;
+        if (bal.gte(amt)) {
+          await tx.distributor.update({
+            where: { id: commission.distributorId },
+            data: { walletBalance: { decrement: amt } },
+          });
+          await tx.walletTransaction.create({
+            data: {
+              distributorId: commission.distributorId,
+              type: 'REFUND',
+              amount: amt.negated(),
+              description: `Commission clawback on refund (level ${commission.level})`,
+              referenceId: orderId,
+            },
+          });
+          await tx.commission.update({
+            where: { id: commission.id },
+            data: { reversedAt: new Date() },
+          });
+        } else {
+          // Mark reversed regardless — the payout is no longer valid.
+          await tx.commission.update({
+            where: { id: commission.id },
+            data: { reversedAt: new Date() },
+          });
+          this.logger.warn(
+            `Commission ${commission.id} reversed but wallet short for ${commission.distributorId} — receivable recorded`,
+          );
+        }
+      }
+
+      return updated;
+    });
+
+    // 6. Re-evaluate achievement progress for the seller and every upline
+    //    whose personal sales just fell, and refresh salary eligibility.
+    //    Best-effort: never fails the refund itself.
+    try {
+      const sponsor = await this.prisma.distributor.findUnique({
+        where: { id: sellerId },
+        select: { sponsorId: true },
+      });
+      const affected = [sellerId, sponsor?.sponsorId].filter(Boolean) as string[];
+      for (const id of affected) {
+        await this.achievementService.syncAchievements(id);
+      }
+      await this.salaryService.recalculateAfterSale();
+    } catch (error) {
+      this.logger.error(`Refund post-processing failed for ${sellerId}:`, error);
+    }
+
+    this.logger.log(`Order ${orderId} REFUNDED and reversed (₹${amount})`);
+    return refunded;
   }
 
   /**
