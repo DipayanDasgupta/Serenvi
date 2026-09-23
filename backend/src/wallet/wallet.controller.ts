@@ -1,7 +1,8 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { WalletService } from './wallet.service';
-import { RequestWithdrawalDto } from '../common/dtos';
+import { RequestWithdrawalDto, CreateDepositDto, RejectDepositDto } from '../common/dtos';
+import { AdminGuard } from '../common/admin.guard';
 import { BadRequestException } from '@nestjs/common';
 
 interface AuthenticatedRequest extends Request {
@@ -72,7 +73,7 @@ export class WalletController {
   @Post('deposit')
   async deposit(
     @Request() req: AuthenticatedRequest,
-    @Body() dto: { amount: number; paymentMethod?: string; transactionId?: string },
+    @Body() dto: CreateDepositDto,
   ) {
     const distributorId = req.user?.distributorId || '';
     return this.walletService.deposit(
@@ -81,6 +82,29 @@ export class WalletController {
       dto.paymentMethod || 'UPI',
       dto.transactionId,
     );
+  }
+
+  // ---- Admin: UPI deposit verification ----
+  @Get('admin/deposits')
+  @UseGuards(AdminGuard)
+  async getAllDeposits(
+    @Query('status') status?: string,
+    @Query('skip') skip: string = '0',
+    @Query('take') take: string = '20',
+  ) {
+    return this.walletService.getAllDeposits(status, parseInt(skip), parseInt(take));
+  }
+
+  @Post('admin/deposits/:id/approve')
+  @UseGuards(AdminGuard)
+  async approveDeposit(@Param('id') id: string) {
+    return this.walletService.approveDeposit(id);
+  }
+
+  @Post('admin/deposits/:id/reject')
+  @UseGuards(AdminGuard)
+  async rejectDeposit(@Param('id') id: string, @Body() dto: RejectDepositDto) {
+    return this.walletService.rejectDeposit(id, dto.reason);
   }
 
   @Post('send-tpin')

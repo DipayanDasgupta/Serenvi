@@ -3,7 +3,7 @@
 import { useAPI, useAuthToken } from "./use-api";
 import { api } from "@/lib/api-client";
 import { mutate } from "swr";
-import type { WalletSummary, WalletTransaction } from "@/lib/types";
+import type { WalletSummary, WalletTransaction, DepositRequest } from "@/lib/types";
 
 export function useWallet() {
   const { data, error, isLoading } = useAPI<WalletSummary>("/wallet");
@@ -44,6 +44,7 @@ export function useWalletActions() {
       token
     );
     mutate("/wallet");
+    mutate((key) => typeof key === "string" && key.startsWith("/wallet/deposits"));
     return result;
   };
 
@@ -63,5 +64,39 @@ export function useWalletActions() {
     return api.post("/wallet/send-tpin", {}, token);
   };
 
-  return { transfer, deposit, withdraw, sendTPin };
+  const approveDeposit = async (id: string) => {
+    const token = await getToken();
+    const result = await api.post(`/wallet/admin/deposits/${id}/approve`, {}, token);
+    mutate((key) => typeof key === "string" && key.includes("/deposits"));
+    mutate("/wallet");
+    return result;
+  };
+
+  const rejectDeposit = async (id: string, reason?: string) => {
+    const token = await getToken();
+    const result = await api.post(
+      `/wallet/admin/deposits/${id}/reject`,
+      { reason },
+      token
+    );
+    mutate((key) => typeof key === "string" && key.includes("/deposits"));
+    return result;
+  };
+
+  return { transfer, deposit, withdraw, sendTPin, approveDeposit, rejectDeposit };
+}
+
+export function useDeposits(skip = 0, take = 20) {
+  const result = useAPI<{ deposits: DepositRequest[]; total: number }>(
+    `/wallet/deposits?skip=${skip}&take=${take}`
+  );
+  return result;
+}
+
+export function useAdminDeposits(status?: string, skip = 0, take = 20) {
+  const q = status ? `?status=${status}&skip=${skip}&take=${take}` : `?skip=${skip}&take=${take}`;
+  const result = useAPI<{ deposits: DepositRequest[]; total: number }>(
+    `/wallet/admin/deposits${q}`
+  );
+  return result;
 }

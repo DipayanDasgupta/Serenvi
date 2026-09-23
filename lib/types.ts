@@ -112,6 +112,18 @@ export interface WalletTransaction {
   createdAt: string;
 }
 
+export interface DepositRequest {
+  id: string;
+  distributorId: string;
+  amount: number;
+  paymentMethod: string;
+  status: "PENDING" | "COMPLETED" | "REJECTED" | "FAILED";
+  transactionId?: string;
+  notes?: string;
+  createdAt: string;
+  distributor?: { id: string; name: string; email: string; referralCode: string };
+}
+
 export interface WithdrawalRequest {
   id: string;
   distributorId: string;

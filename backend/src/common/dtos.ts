@@ -201,6 +201,29 @@ export class RequestWithdrawalDto {
   accountHolder!: string;
 }
 
+// Deposit DTOs (manual UPI QR flow: pay -> submit UTR -> admin approves)
+export class CreateDepositDto {
+  @IsNumber()
+  @Min(1)
+  amount!: number;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsString()
+  @Matches(/^[A-Za-z0-9]{6,30}$/, { message: 'UTR / UPI reference must be 6-30 letters or numbers' })
+  @Transform(({ value }: { value: any }) => value?.trim())
+  transactionId!: string;
+}
+
+export class RejectDepositDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
 // Distributor Update DTO
 export class UpdateDistributorDto {
   @IsOptional()

@@ -367,7 +367,8 @@ export class WalletService {
   }
 
   /**
-   * Deposit (Topup) to wallet
+   * Deposit (Topup) request — manual UPI QR flow.
+   * Creates a PENDING record; wallet is credited only when admin approves.
    */
   async deposit(
     distributorId: string,
@@ -375,8 +376,13 @@ export class WalletService {
     paymentMethod: string = 'UPI',
     transactionId?: string,
   ) {
-    if (amount <= 0) {
+    if (!amount || amount <= 0) {
       throw new BadRequestException('Amount must be greater than 0');
+    }
+
+    const utr = (transactionId || '').trim();
+    if (!/^[A-Za-z0-9]{6,30}$/.test(utr)) {
+      throw new BadRequestException('UTR / UPI reference ID is required (6-30 letters or numbers)');
     }
 
     const distributor = await this.prisma.distributor.findUnique({
@@ -387,46 +393,130 @@ export class WalletService {
       throw new BadRequestException('Distributor not found');
     }
 
+    // Prevent double-submission of the same UTR
+    const duplicate = await this.prisma.deposit.findFirst({
+      where: { transactionId: utr },
+      select: { id: true, status: true },
+    });
+    if (duplicate) {
+      throw new BadRequestException('This UTR has already been submitted');
+    }
+
     const amountDecimal = new Decimal(amount);
 
-    // Create deposit record
     const deposit = await this.prisma.deposit.create({
       data: {
         distributorId,
         amount: amountDecimal,
         paymentMethod,
-        transactionId,
-        status: 'COMPLETED',
+        transactionId: utr,
+        status: 'PENDING',
       },
     });
 
-    // Update wallet balance
-    await this.prisma.distributor.update({
-      where: { id: distributorId },
-      data: {
-        walletBalance: {
-          increment: amountDecimal,
-        },
-      },
-    });
-
-    // Log transaction
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId,
-        type: 'DEPOSIT',
-        amount: amountDecimal,
-        description: `Wallet topup via ${paymentMethod}`,
-        referenceId: deposit.id,
-      },
-    });
-
-    this.logger.log(`Deposit of ₹${amount} created for distributor ${distributorId}`);
+    this.logger.log(`Deposit request ₹${amount} (UTR ${utr}) from ${distributorId} — pending approval`);
 
     return {
       ...deposit,
       amount: deposit.amount.toNumber(),
+      message: 'Payment submitted. Your wallet will be credited after admin verification.',
     };
+  }
+
+  /**
+   * Admin: list all deposit requests (newest first)
+   */
+  async getAllDeposits(status?: string, skip: number = 0, take: number = 20) {
+    const where = status ? { status } : {};
+    const [deposits, total] = await Promise.all([
+      this.prisma.deposit.findMany({
+        where,
+        include: {
+          distributor: { select: { id: true, name: true, email: true, referralCode: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+      this.prisma.deposit.count({ where }),
+    ]);
+
+    return {
+      deposits: deposits.map((d: any) => ({
+        ...d,
+        amount: d.amount.toNumber(),
+      })),
+      total,
+      skip,
+      take,
+    };
+  }
+
+  /**
+   * Admin: approve a PENDING deposit — credits the wallet
+   */
+  async approveDeposit(depositId: string) {
+    const deposit = await this.prisma.deposit.findUnique({
+      where: { id: depositId },
+    });
+
+    if (!deposit) {
+      throw new BadRequestException('Deposit not found');
+    }
+    if (deposit.status !== 'PENDING') {
+      throw new BadRequestException(`Cannot approve deposit with status: ${deposit.status}`);
+    }
+
+    const amountDecimal = deposit.amount as Decimal;
+
+    await this.prisma.distributor.update({
+      where: { id: deposit.distributorId },
+      data: { walletBalance: { increment: amountDecimal } },
+    });
+
+    await this.prisma.walletTransaction.create({
+      data: {
+        distributorId: deposit.distributorId,
+        type: 'DEPOSIT',
+        amount: amountDecimal,
+        description: `Wallet topup via ${deposit.paymentMethod} (UTR ${deposit.transactionId || deposit.id})`,
+        referenceId: deposit.id,
+      },
+    });
+
+    const updated = await this.prisma.deposit.update({
+      where: { id: depositId },
+      data: { status: 'COMPLETED' },
+    });
+
+    this.logger.log(`Deposit ${depositId} approved — ₹${amountDecimal} credited`);
+
+    return { ...updated, amount: updated.amount.toNumber() };
+  }
+
+  /**
+   * Admin: reject a PENDING deposit — no wallet movement
+   */
+  async rejectDeposit(depositId: string, reason?: string) {
+    const deposit = await this.prisma.deposit.findUnique({
+      where: { id: depositId },
+    });
+
+    if (!deposit) {
+      throw new BadRequestException('Deposit not found');
+    }
+    if (deposit.status !== 'PENDING') {
+      throw new BadRequestException(`Cannot reject deposit with status: ${deposit.status}`);
+    }
+
+    const updated = await this.prisma.deposit.update({
+      where: { id: depositId },
+      data: { status: 'REJECTED', notes: reason || 'Rejected by admin' },
+    });
+
+    this.logger.log(`Deposit ${depositId} rejected: ${reason || 'no reason'}`);
+
+    return { ...updated, amount: updated.amount.toNumber() };
   }
 
   /**

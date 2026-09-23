@@ -331,8 +331,8 @@ model Deposit {
   
   amount          Decimal   @db.Decimal(15, 2)
   paymentMethod   String    // UPI, CARD, BANK_TRANSFER, WALLET
-  status          String    @default("COMPLETED") // COMPLETED, PENDING, FAILED
-  transactionId   String?   // External payment gateway ID
+  status          String    @default("PENDING") // PENDING, COMPLETED, REJECTED, FAILED
+  transactionId   String?   // UPI UTR / external payment reference ID
   notes           String?
   
   createdAt       DateTime  @default(now())

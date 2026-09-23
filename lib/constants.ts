@@ -42,6 +42,7 @@ export const ADMIN_NAV_ITEMS = [
   { label: "Admin Dashboard", href: "/admin", icon: "shield" },
   { label: "Users", href: "/admin/users", icon: "users" },
   { label: "Orders", href: "/admin/orders", icon: "receipt" },
+  { label: "Deposits", href: "/admin/deposits", icon: "wallet" },
 ] as const;
 
 export const TRANSACTION_TYPE_COLORS: Record<string, string> = {
