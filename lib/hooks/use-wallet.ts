@@ -1,6 +1,6 @@
 "use client";
 
-import { useAPI, useAuthToken } from "./use-api";
+import { useAPI, useAuthToken, matchKey } from "./use-api";
 import { api } from "@/lib/api-client";
 import { mutate } from "swr";
 import type { WalletSummary, WalletTransaction, DepositRequest } from "@/lib/types";
@@ -31,8 +31,8 @@ export function useWalletActions() {
       { toReferralCode, amount, tPin },
       token
     );
-    mutate("/wallet");
-    mutate("/wallet/history");
+    mutate(matchKey("/wallet"));
+    mutate(matchKey("/wallet/history"));
     return result;
   };
 
@@ -43,8 +43,8 @@ export function useWalletActions() {
       { amount, paymentMethod, transactionId },
       token
     );
-    mutate("/wallet");
-    mutate((key) => typeof key === "string" && key.startsWith("/wallet/deposits"));
+    mutate(matchKey("/wallet"));
+    mutate(matchKey("/wallet/deposits"));
     return result;
   };
 
@@ -55,7 +55,7 @@ export function useWalletActions() {
       { amount, bankAccount, bankIFSC, accountHolder },
       token
     );
-    mutate("/wallet");
+    mutate(matchKey("/wallet"));
     return result;
   };
 
@@ -67,8 +67,8 @@ export function useWalletActions() {
   const approveDeposit = async (id: string) => {
     const token = await getToken();
     const result = await api.post(`/wallet/admin/deposits/${id}/approve`, {}, token);
-    mutate((key) => typeof key === "string" && key.includes("/deposits"));
-    mutate("/wallet");
+    mutate(matchKey("/deposits"));
+    mutate(matchKey("/wallet"));
     return result;
   };
 
@@ -79,7 +79,7 @@ export function useWalletActions() {
       { reason },
       token
     );
-    mutate((key) => typeof key === "string" && key.includes("/deposits"));
+    mutate(matchKey("/deposits"));
     return result;
   };
 

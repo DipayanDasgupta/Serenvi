@@ -1,6 +1,6 @@
 "use client";
 
-import { useAPI, useAuthToken } from "./use-api";
+import { useAPI, useAuthToken, matchKey } from "./use-api";
 import { api } from "@/lib/api-client";
 import { mutate } from "swr";
 import type { CartItem } from "@/lib/types";
@@ -16,8 +16,8 @@ export function useCart() {
   ) => {
     const token = await getToken();
     await api.post("/cart/add", { productId, quantity, selectedSize }, token);
-    mutate("/cart");
-    mutate("/cart/count");
+    mutate(matchKey("/cart"));
+    mutate(matchKey("/cart"));
   };
 
   const updateQuantity = async (
@@ -27,22 +27,22 @@ export function useCart() {
   ) => {
     const token = await getToken();
     await api.put("/cart/update", { productId, quantity, selectedSize }, token);
-    mutate("/cart");
-    mutate("/cart/count");
+    mutate(matchKey("/cart"));
+    mutate(matchKey("/cart"));
   };
 
   const removeItem = async (productId: string) => {
     const token = await getToken();
     await api.delete(`/cart/${productId}`, token);
-    mutate("/cart");
-    mutate("/cart/count");
+    mutate(matchKey("/cart"));
+    mutate(matchKey("/cart"));
   };
 
   const clearCart = async () => {
     const token = await getToken();
     await api.delete("/cart", token);
-    mutate("/cart");
-    mutate("/cart/count");
+    mutate(matchKey("/cart"));
+    mutate(matchKey("/cart"));
   };
 
   return {
