@@ -150,10 +150,46 @@ export class WalletController {
   }
 
   /**
+   * Admin: list withdrawal requests. The amount is already reserved in the
+   * wallet at request time, so PENDING rows represent held funds.
+   */
+  @Get('admin/withdrawals')
+  @UseGuards(AdminGuard)
+  async getWithdrawalRequests(
+    @Query('status') status?: string,
+    @Query('skip') skip: string = '0',
+    @Query('take') take: string = '20',
+  ) {
+    return this.walletService.getWithdrawalRequests(status, parseInt(skip), parseInt(take));
+  }
+
+  /**
+   * Admin: approve a withdrawal. Idempotent — the reserved amount is already
+   * out of the wallet, so approval only finalises the payout and a retry
+   * returns the same APPROVED record instead of paying twice.
+   */
+  @Post('admin/withdrawals/:id/approve')
+  @UseGuards(AdminGuard)
+  async approveWithdrawal(@Param('id') id: string) {
+    return this.walletService.approveWithdrawal(id);
+  }
+
+  /**
+   * Admin: reject a withdrawal. Releases the reserved amount back to the
+   * wallet. Idempotent.
+   */
+  @Post('admin/withdrawals/:id/reject')
+  @UseGuards(AdminGuard)
+  async rejectWithdrawal(@Param('id') id: string, @Body() dto: RejectDepositDto) {
+    return this.walletService.rejectWithdrawal(id, dto.reason || 'Rejected by admin');
+  }
+
+  /**
    * Admin endpoint: Validate and fix all wallet balances
    * Checks if wallet balance = sum of all transactions
    */
   @Post('admin/validate-all')
+  @UseGuards(AdminGuard)
   async validateAllWallets() {
     return this.walletService.validateAndFixWalletBalances();
   }
