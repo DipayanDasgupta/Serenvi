@@ -1,21 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAPI, useAuthToken } from "@/lib/hooks/use-api";
+import { useAuthToken } from "@/lib/hooks/use-api";
+import { useMyDistributor } from "@/lib/hooks/use-distributor";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Distributor } from "@/lib/types";
 
 export default function ProfilePage() {
-  // TODO: Replace with actual distributor ID from auth context
-  const distributorId = "current";
-  const { data: distributor, isLoading, mutate } = useAPI<Distributor>(
-    `/distributors/${distributorId}`
-  );
+  const { data: distributor, isLoading, mutate } = useMyDistributor();
+  const distributorId = distributor?.id;
   const getToken = useAuthToken();
 
   const [name, setName] = useState("");
@@ -42,6 +39,10 @@ export default function ProfilePage() {
   const handleSave = async () => {
     setError("");
     setSuccess("");
+    if (!distributorId) {
+      setError("Profile is still loading. Please try again.");
+      return;
+    }
     setIsSaving(true);
     try {
       const token = await getToken();
@@ -74,11 +75,17 @@ export default function ProfilePage() {
   };
 
   const handleRegenerateCode = async () => {
+    setError("");
+    if (!distributorId) {
+      setError("Profile is still loading. Please try again.");
+      return;
+    }
     setIsRegenerating(true);
     try {
       const token = await getToken();
-      await api.post(`/distributors/${distributorId}/regenerate-code`, {}, token);
+      await api.post(`/distributors/${distributorId}/regenerate-referral-code`, {}, token);
       mutate();
+      setSuccess("New referral code generated.");
     } catch {
       setError("Failed to regenerate referral code.");
     } finally {

@@ -26,7 +26,7 @@ function AuthActions() {
         </Link>
         <Link
           href="/sign-up"
-          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-background transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           Get Started
         </Link>
@@ -43,7 +43,7 @@ function AuthActions() {
           </button>
         </SignInButton>
         <SignUpButton mode="modal">
-          <button className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-background transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+          <button className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background">
             Get Started
           </button>
         </SignUpButton>

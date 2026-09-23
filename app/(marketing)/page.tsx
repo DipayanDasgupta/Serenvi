@@ -78,7 +78,7 @@ export default function LandingPage() {
           <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link
               href="/sign-up"
-              className="inline-flex items-center rounded-xl bg-accent px-8 py-3.5 text-base font-semibold text-background transition-colors hover:bg-accent/90"
+              className="inline-flex items-center rounded-xl bg-accent px-8 py-3.5 text-base font-semibold text-white transition-colors hover:bg-accent/90"
             >
               Get Started
               <svg className="ml-2 h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -176,7 +176,7 @@ export default function LandingPage() {
           </p>
           <Link
             href="/sign-up"
-            className="mt-8 inline-flex items-center rounded-xl bg-accent px-8 py-3.5 text-base font-semibold text-background transition-colors hover:bg-accent/90"
+            className="mt-8 inline-flex items-center rounded-xl bg-accent px-8 py-3.5 text-base font-semibold text-white transition-colors hover:bg-accent/90"
           >
             Join Now - It&apos;s Free
           </Link>

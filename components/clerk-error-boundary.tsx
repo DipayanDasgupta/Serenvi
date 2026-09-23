@@ -57,7 +57,7 @@ export class ClerkErrorBoundary extends Component<Props, { failed: boolean; mess
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => window.location.reload()}
-              className="inline-flex items-center rounded-xl bg-accent px-6 py-2.5 text-sm font-semibold text-background transition-colors hover:bg-accent/90"
+              className="inline-flex items-center rounded-xl bg-accent px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
             >
               Retry
             </button>

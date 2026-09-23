@@ -21,7 +21,7 @@ export default function SignUpPage() {
           </p>
           <Link
             href="/"
-            className="mt-6 inline-flex items-center rounded-xl bg-accent px-6 py-2.5 text-sm font-semibold text-background transition-colors hover:bg-accent/90"
+            className="mt-6 inline-flex items-center rounded-xl bg-accent px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
           >
             Back to home
           </Link>

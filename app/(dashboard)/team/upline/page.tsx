@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAPI } from "@/lib/hooks/use-api";
+import { useMyDistributor } from "@/lib/hooks/use-distributor";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -10,10 +11,10 @@ import { RANK_COLORS } from "@/lib/constants";
 import type { TeamMember } from "@/lib/types";
 
 export default function UplinePage() {
-  // TODO: Replace with actual distributor ID from auth context
-  const distributorId = "current";
+  const { data: me } = useMyDistributor();
+  const distributorId = me?.id;
   const { data: upline, isLoading } = useAPI<TeamMember[]>(
-    `/distributors/${distributorId}/upline`
+    distributorId ? `/distributors/${distributorId}/upline` : null
   );
 
   // Upline comes as root → ... → direct sponsor; reverse so direct sponsor is at bottom

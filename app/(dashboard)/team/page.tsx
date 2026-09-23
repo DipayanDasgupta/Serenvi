@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAPI } from "@/lib/hooks/use-api";
+import { useMyDistributor } from "@/lib/hooks/use-distributor";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,10 +11,10 @@ import { formatCurrency } from "@/lib/utils";
 import type { TeamAnalytics } from "@/lib/types";
 
 export default function TeamPage() {
-  // TODO: Replace with actual distributor ID from auth context
-  const distributorId = "current";
+  const { data: me } = useMyDistributor();
+  const distributorId = me?.id;
   const { data: analytics, isLoading } = useAPI<TeamAnalytics>(
-    `/distributors/${distributorId}/team`
+    distributorId ? `/distributors/${distributorId}/team` : null
   );
 
   return (

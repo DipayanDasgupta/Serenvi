@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { useAPI, useAuthToken } from "@/lib/hooks/use-api";
+import { useMyDistributor } from "@/lib/hooks/use-distributor";
 import { api } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -125,10 +126,10 @@ function TreeNode({
 }
 
 export default function DownlinePage() {
-  // TODO: Replace with actual distributor ID from auth context
-  const distributorId = "current";
+  const { data: me } = useMyDistributor();
+  const distributorId = me?.id;
   const { data: initialDownline, isLoading } = useAPI<TeamMember[]>(
-    `/distributors/${distributorId}/downline?depth=1`
+    distributorId ? `/distributors/${distributorId}/downline?depth=1` : null
   );
   const getToken = useAuthToken();
 
