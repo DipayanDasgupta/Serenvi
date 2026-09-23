@@ -5,9 +5,27 @@ import { api } from "@/lib/api-client";
 import { mutate } from "swr";
 import type { WalletSummary, WalletTransaction, DepositRequest } from "@/lib/types";
 
+const num = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Backend may return `balance` and/or the raw `walletBalance` column
+// (field names drifted before and zeroed the wallet page). Accept both so
+// the wallet page and checkout can never show ₹0 on a shape mismatch again.
+type WalletResponse = Partial<WalletSummary> & { walletBalance?: unknown };
+
 export function useWallet() {
-  const { data, error, isLoading } = useAPI<WalletSummary>("/wallet");
-  return { wallet: data, error, isLoading };
+  const { data, error, isLoading } = useAPI<WalletResponse>("/wallet");
+  const wallet: WalletSummary | undefined = data
+    ? {
+        balance: num(data.balance ?? data.walletBalance),
+        totalEarnings: num(data.totalEarnings),
+        totalWithdrawals: num(data.totalWithdrawals),
+        pendingWithdrawals: num(data.pendingWithdrawals),
+      }
+    : undefined;
+  return { wallet, error, isLoading };
 }
 
 export function useWalletTransactions(skip = 0, take = 20) {
