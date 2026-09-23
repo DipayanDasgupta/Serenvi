@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { mutate } from "swr";
 import { useWallet, useWalletTransactions } from "@/lib/hooks/use-wallet";
+import { matchKey } from "@/lib/hooks/use-api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,8 +12,10 @@ import { formatCurrency, formatRelativeTime } from "@/lib/utils";
 import { TRANSACTION_TYPE_COLORS } from "@/lib/constants";
 
 export default function WalletPage() {
-  const { wallet, isLoading: walletLoading } = useWallet();
+  const { wallet, error: walletError, isLoading: walletLoading } = useWallet();
   const { data: transactions, isLoading: txLoading } = useWalletTransactions(0, 10);
+  // Never show a confident ₹0 when the balance failed to load.
+  const balanceFailed = !walletLoading && !!walletError && !wallet;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -23,6 +27,23 @@ export default function WalletPage() {
       {/* Balance Card */}
       {walletLoading ? (
         <Skeleton className="h-48 w-full rounded-2xl" />
+      ) : balanceFailed ? (
+        <div className="glass rounded-2xl p-8 border-danger/30">
+          <p className="text-sm font-medium text-muted mb-2">Available Balance</p>
+          <p className="text-lg font-semibold text-danger mb-2">
+            Couldn&apos;t load your balance.
+          </p>
+          <p className="text-sm text-muted mb-4">
+            Check your connection and try again — your funds are safe.
+          </p>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => mutate(matchKey("/wallet"))}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="glass rounded-2xl p-8 bg-gradient-to-br from-accent/5 to-accent-2/5">
           <p className="text-sm font-medium text-muted mb-2">Available Balance</p>

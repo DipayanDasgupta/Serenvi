@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { mutate } from "swr";
 import { useCart } from "@/lib/hooks/use-cart";
 import { useWallet } from "@/lib/hooks/use-wallet";
-import { useAuthToken } from "@/lib/hooks/use-api";
+import { useAuthToken, matchKey } from "@/lib/hooks/use-api";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,13 +15,16 @@ type CheckoutStatus = "idle" | "paying" | "success" | "error";
 
 export default function CheckoutPage() {
   const { items, total, count, clearCart } = useCart();
-  const { wallet } = useWallet();
+  const { wallet, error: walletError, isLoading: walletLoading } = useWallet();
   const getToken = useAuthToken();
   const [status, setStatus] = useState<CheckoutStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Balance unknown (load failed) is not the same as balance zero — never
+  // show a false "insufficient" and never allow paying blind.
+  const balanceUnknown = !walletLoading && !!walletError && !wallet;
   const balance = wallet?.balance || 0;
-  const insufficient = total > balance;
+  const insufficient = !balanceUnknown && total > balance;
 
   const handlePayment = async () => {
     if (items.length === 0) return;
@@ -184,6 +188,21 @@ export default function CheckoutPage() {
               )}
 
               {/* Insufficient balance */}
+              {status === "idle" && balanceUnknown && items.length > 0 && (
+                <div className="rounded-xl bg-danger/10 border border-danger/20 p-3">
+                  <p className="text-sm text-danger">
+                    Couldn&apos;t load your wallet balance. Your funds are safe — retry to continue.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => mutate(matchKey("/wallet"))}
+                    className="mt-2 inline-block text-sm font-semibold text-accent hover:underline"
+                  >
+                    Retry →
+                  </button>
+                </div>
+              )}
+
               {status === "idle" && insufficient && items.length > 0 && (
                 <div className="rounded-xl bg-warning/10 border border-warning/20 p-3">
                   <p className="text-sm text-warning">
@@ -212,7 +231,7 @@ export default function CheckoutPage() {
                 className="w-full"
                 onClick={handlePayment}
                 isLoading={isProcessing}
-                disabled={isProcessing || insufficient}
+                disabled={isProcessing || insufficient || balanceUnknown || walletLoading}
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
