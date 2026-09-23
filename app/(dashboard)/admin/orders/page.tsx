@@ -7,12 +7,14 @@ import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs } from "@/components/ui/tabs";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import type { Sale } from "@/lib/types";
 
-const STATUS_VARIANTS: Record<string, "success" | "warning" | "danger"> = {
+const STATUS_VARIANTS: Record<string, "success" | "warning" | "danger" | "info" | "default"> = {
   COMPLETED: "success",
+  DELIVERED: "success",
   PENDING: "warning",
+  SHIPPED: "info",
   REFUNDED: "danger",
+  CANCELLED: "danger",
 };
 
 const FILTER_TABS = [
@@ -22,21 +24,32 @@ const FILTER_TABS = [
   { label: "Refunded", value: "REFUNDED" },
 ];
 
-interface AdminOrder extends Sale {
-  distributor?: {
-    name: string;
-    email: string;
-  };
+// Matches backend GET /admin/orders (admin.service getAllOrders).
+interface AdminOrder {
+  id: string;
+  buyer?: { name?: string; email?: string } | null;
+  product?: { name?: string } | null;
+  quantity?: number;
+  saleAmount?: number | string;
+  paymentMethod?: string;
+  orderStatus?: string;
+  createdAt?: string;
 }
 
+const num = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
 export default function AdminOrdersPage() {
-  const { data: orders, isLoading } = useAPI<AdminOrder[]>("/admin/orders");
+  const { data, isLoading } = useAPI<AdminOrder[] | { orders: AdminOrder[] }>("/admin/orders");
+  // Backend returns a plain array; normalize defensively.
+  const orders: AdminOrder[] = Array.isArray(data) ? data : data?.orders ?? [];
   const [statusFilter, setStatusFilter] = useState("ALL");
 
   const filtered = useMemo(() => {
-    if (!orders) return [];
     if (statusFilter === "ALL") return orders;
-    return orders.filter((o) => o.status === statusFilter);
+    return orders.filter((o) => o.orderStatus === statusFilter);
   }, [orders, statusFilter]);
 
   const columns = [
@@ -45,16 +58,16 @@ export default function AdminOrdersPage() {
       label: "Order ID",
       render: (item: AdminOrder) => (
         <span className="text-sm font-mono text-muted">
-          {item.id.slice(0, 8)}...
+          {typeof item.id === "string" ? `${item.id.slice(0, 8)}...` : "—"}
         </span>
       ),
     },
     {
-      key: "distributor",
+      key: "buyer",
       label: "User",
       render: (item: AdminOrder) => (
         <span className="text-sm font-medium text-foreground">
-          {item.distributor?.name || item.distributorId.slice(0, 8)}
+          {item.buyer?.name || item.buyer?.email || "—"}
         </span>
       ),
     },
@@ -64,6 +77,7 @@ export default function AdminOrdersPage() {
       render: (item: AdminOrder) => (
         <span className="text-sm text-foreground">
           {item.product?.name || "Product"}
+          {item.quantity && item.quantity > 1 ? ` × ${item.quantity}` : ""}
         </span>
       ),
     },
@@ -72,7 +86,7 @@ export default function AdminOrdersPage() {
       label: "Amount",
       render: (item: AdminOrder) => (
         <span className="text-sm font-semibold text-foreground">
-          {formatCurrency(item.amount)}
+          {formatCurrency(num(item.saleAmount))}
         </span>
       ),
     },
@@ -80,8 +94,8 @@ export default function AdminOrdersPage() {
       key: "status",
       label: "Status",
       render: (item: AdminOrder) => (
-        <Badge variant={STATUS_VARIANTS[item.status] || "default"}>
-          {item.status}
+        <Badge variant={STATUS_VARIANTS[item.orderStatus ?? ""] || "default"}>
+          {item.orderStatus || "—"}
         </Badge>
       ),
     },
@@ -89,7 +103,9 @@ export default function AdminOrdersPage() {
       key: "createdAt",
       label: "Date",
       render: (item: AdminOrder) => (
-        <span className="text-sm text-muted">{formatDate(item.createdAt)}</span>
+        <span className="text-sm text-muted">
+          {item.createdAt ? formatDate(item.createdAt) : "—"}
+        </span>
       ),
     },
   ];

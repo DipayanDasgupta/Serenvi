@@ -16,18 +16,19 @@ const STATUS_VARIANTS: Record<string, "success" | "warning" | "danger"> = {
 };
 
 export default function AdminUsersPage() {
-  const { data: users, isLoading } = useAPI<Distributor[]>("/admin/users");
+  const { data, isLoading } = useAPI<Distributor[] | { users: Distributor[] }>("/admin/users");
+  // Backend returns a plain array; normalize defensively.
+  const users: Distributor[] = Array.isArray(data) ? data : data?.users ?? [];
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
-    if (!users) return [];
     if (!search) return users;
     const q = search.toLowerCase();
     return users.filter(
       (u) =>
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        u.referralCode.toLowerCase().includes(q)
+        (u.name || "").toLowerCase().includes(q) ||
+        (u.email || "").toLowerCase().includes(q) ||
+        (u.referralCode || "").toLowerCase().includes(q)
     );
   }, [users, search]);
 
@@ -65,7 +66,7 @@ export default function AdminUsersPage() {
       label: "Total Sales",
       render: (item: Distributor) => (
         <span className="text-sm font-semibold text-foreground">
-          {formatCurrency(item.totalSales)}
+          {formatCurrency(Number(item.totalSales) || 0)}
         </span>
       ),
     },
