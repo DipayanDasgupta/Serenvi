@@ -74,7 +74,9 @@ export function useAPI<T>(
   // accounts on a shared browser.
   const key = endpoint ? [endpoint, userId ?? "anon"] : null;
 
-  const fetcher = async ([url]: [string]) => {
+  // NOTE: SWR spreads array keys as separate args, so the first arg is the
+  // endpoint string itself — never destructure it.
+  const fetcher = async (url: string) => {
     const token = await resolveBackendToken(
       () => getToken().catch(() => null),
       isSignedIn ?? false,
