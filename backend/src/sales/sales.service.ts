@@ -286,74 +286,102 @@ export class SalesService {
       throw new BadRequestException('Insufficient wallet balance. Please deposit funds first.');
     }
 
-    // Deduct from wallet
-    await this.prisma.distributor.update({
-      where: { id: buyerId },
-      data: {
-        walletBalance: {
-          decrement: purchaseAmount,
-        },
-      },
-    });
-
-    // 1. Create sale record (using buyer as seller for now - system purchase)
-    const sale = await this.prisma.sale.create({
-      data: {
-        sellerId: buyerId, // Buyer is creating this sale record for tracking
-        productId,
-        quantity,
-        saleAmount: purchaseAmount,
-        paymentMethod,
-        orderStatus: 'COMPLETED',
-      },
-    });
-
-    // 1.5. UPDATE BUYER'S TOTAL SALES (THIS WAS MISSING!)
-    await this.prisma.distributor.update({
-      where: { id: buyerId },
-      data: {
-        totalSales: {
-          increment: purchaseAmount,
-        },
-      },
-    });
-    this.logger.log(`[PURCHASE] ✓ Updated totalSales for ${buyerId}: +₹${purchaseAmount}`);
-
-    // 2. Update product stock if physical
-    if (product.type === 'PHYSICAL') {
-      await this.prisma.product.update({
-        where: { id: productId },
+    // All money movement runs inside ONE transaction: wallet columns and
+    // ledger rows can never diverge (no more ghost credits/debits).
+    const sale = await this.prisma.$transaction(async (tx) => {
+      // Deduct from wallet
+      await tx.distributor.update({
+        where: { id: buyerId },
         data: {
-          stockQuantity: (product.stockQuantity || 0) - quantity,
+          walletBalance: {
+            decrement: purchaseAmount,
+          },
         },
       });
-    }
 
-    // 3. Log transaction for buyer
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId: buyerId,
-        type: 'PRODUCT_PURCHASE',
-        amount: purchaseAmount.negated(), // Negative because money went out
-        description: `Purchased ${quantity}x ${product.name}`,
-        referenceId: sale.id,
-      },
-    });
+      // 1. Create sale record (using buyer as seller for now - system purchase)
+      const created = await tx.sale.create({
+        data: {
+          sellerId: buyerId, // Buyer is creating this sale record for tracking
+          productId,
+          quantity,
+          saleAmount: purchaseAmount,
+          paymentMethod,
+          orderStatus: 'COMPLETED',
+        },
+      });
 
-    // 4. Trigger commission distribution to upline
-    this.logger.log(`[PURCHASE] Triggering commission distribution for sale ${sale.id} by ${buyerId} for amount ₹${purchaseAmount}`);
-    try {
-      await this.commissionService.distributeCommission(sale.id, buyerId, purchaseAmount);
+      // 1.5. UPDATE BUYER'S TOTAL SALES (THIS WAS MISSING!)
+      await tx.distributor.update({
+        where: { id: buyerId },
+        data: {
+          totalSales: {
+            increment: purchaseAmount,
+          },
+        },
+      });
+      this.logger.log(`[PURCHASE] ✓ Updated totalSales for ${buyerId}: +₹${purchaseAmount}`);
+
+      // 1.6. Propagate to SPONSOR's personal/team sales (THIS WAS MISSING —
+      // downline purchases never counted anywhere, so team sales, personal
+      // sales and achievement progress stayed at zero forever).
+      if (buyer.sponsorId) {
+        await tx.distributor.update({
+          where: { id: buyer.sponsorId },
+          data: {
+            level1Sales: { increment: purchaseAmount },
+            monthlySales: { increment: purchaseAmount },
+          },
+        });
+        this.logger.log(
+          `[PURCHASE] ✓ Sponsor ${buyer.sponsorId} level1Sales/monthlySales +₹${purchaseAmount}`,
+        );
+      }
+
+      // 2. Update product stock if physical
+      if (product.type === 'PHYSICAL') {
+        await tx.product.update({
+          where: { id: productId },
+          data: {
+            stockQuantity: (product.stockQuantity || 0) - quantity,
+          },
+        });
+      }
+
+      // 3. Log transaction for buyer
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: buyerId,
+          type: 'PRODUCT_PURCHASE',
+          amount: purchaseAmount.negated(), // Negative because money went out
+          description: `Purchased ${quantity}x ${product.name}`,
+          referenceId: created.id,
+        },
+      });
+
+      // 4. Commission distribution joins the same transaction: either the
+      // whole purchase (debit + commissions + sales counters) commits, or
+      // nothing does. A failed purchase surfaces as an error to retry —
+      // never as a half-written ledger.
+      this.logger.log(`[PURCHASE] Triggering commission distribution for sale ${created.id} by ${buyerId} for amount ₹${purchaseAmount}`);
+      await this.commissionService.distributeCommission(created.id, buyerId, purchaseAmount, tx);
       this.logger.log(`[PURCHASE] ✓ Commission distribution completed successfully`);
-    } catch (commissionError) {
-      this.logger.error(`[PURCHASE] ✗ Commission distribution FAILED:`, commissionError);
-    }
+
+      return created;
+    });
 
     // Note: Leadership salary is now distributed automatically on the 1st of each month
     // based on monthly sales tiers, not in real-time
 
-    // 5. Check and award achievements
-    await this.achievementService.checkAndClaimAchievements(buyerId);
+    // 5. Check and award achievements (non-money: best-effort after commit).
+    // Check the buyer AND the sponsor whose team volume just moved.
+    for (const id of [buyerId, buyer.sponsorId].filter(Boolean) as string[]) {
+      try {
+        await this.achievementService.checkAndClaimAchievements(id);
+      } catch (achievementError) {
+        this.logger.error(`[PURCHASE] ✗ Achievement check FAILED for ${id}:`, achievementError);
+      }
+    }
 
     this.logger.log(
       `[PURCHASE] ✓ Product purchase: ${quantity}x ${product.name} by ${buyer.name} for ₹${purchaseAmount} via ${paymentMethod}`,

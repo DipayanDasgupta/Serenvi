@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 
 // MLM Commission Structure - 15 levels with 55% total payout
 const COMMISSION_STRUCTURE: Record<number, number> = {
@@ -35,7 +36,11 @@ export class CommissionService {
     saleId: string,
     sellerId: string,
     saleAmount: Decimal,
+    // Optional interactive-transaction client: when provided, all commission
+    // writes join the caller's transaction (all-or-nothing with the sale).
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
+    const db = tx ?? this.prisma;
     try {
       this.logger.log(`[COMMISSION] Starting distribution for sale ${saleId}, seller ${sellerId}, amount ₹${saleAmount}`);
       
@@ -55,7 +60,7 @@ export class CommissionService {
           this.logger.log(`[COMMISSION] Level ${level}: Distributing ₹${commissionAmount} to ${uplineId}`);
           
           // Credit commission to upline wallet
-          await this.prisma.distributor.update({
+          await db.distributor.update({
             where: { id: uplineId },
             data: {
               walletBalance: {
@@ -65,7 +70,7 @@ export class CommissionService {
           });
 
           // Record commission
-          await this.prisma.commission.create({
+          await db.commission.create({
             data: {
               distributorId: uplineId,
               saleId,
@@ -76,7 +81,7 @@ export class CommissionService {
           });
 
           // Log transaction
-          await this.prisma.walletTransaction.create({
+          await db.walletTransaction.create({
             data: {
               distributorId: uplineId,
               type: 'MLM_COMMISSION',

@@ -324,35 +324,40 @@ export class WalletService {
       );
     }
 
-    // Deduct from wallet
-    await this.prisma.distributor.update({
-      where: { id: withdrawal.distributorId },
-      data: {
-        walletBalance: {
-          decrement: withdrawal.amount,
+    // Atomic: balance debit + ledger row + status flip commit together.
+    // The ledger row MUST be the negated full amount (money left the wallet);
+    // a positive entry here would corrupt every balance-from-ledger computation.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Deduct from wallet
+      await tx.distributor.update({
+        where: { id: withdrawal.distributorId },
+        data: {
+          walletBalance: {
+            decrement: withdrawal.amount,
+          },
         },
-      },
-    });
+      });
 
-    // Log transaction
-    const netAmount = withdrawal.amount.minus(withdrawal.fee);
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId: withdrawal.distributorId,
-        type: 'WITHDRAWAL',
-        amount: netAmount,
-        description: `Withdrawal approved (Fee: ₹${withdrawal.fee})`,
-        referenceId: withdrawalId,
-      },
-    });
+      // Log transaction
+      const netAmount = withdrawal.amount.minus(withdrawal.fee);
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: withdrawal.distributorId,
+          type: 'WITHDRAWAL',
+          amount: (withdrawal.amount as Decimal).negated(),
+          description: `Withdrawal approved (net ₹${netAmount}, fee ₹${withdrawal.fee})`,
+          referenceId: withdrawalId,
+        },
+      });
 
-    // Update withdrawal status
-    const updated = await this.prisma.withdrawalRequest.update({
-      where: { id: withdrawalId },
-      data: {
-        status: 'APPROVED',
-        processedAt: new Date(),
-      },
+      // Update withdrawal status
+      return tx.withdrawalRequest.update({
+        where: { id: withdrawalId },
+        data: {
+          status: 'APPROVED',
+          processedAt: new Date(),
+        },
+      });
     });
 
     this.logger.log(`Withdrawal ${withdrawalId} approved`);
@@ -506,24 +511,27 @@ export class WalletService {
 
     const amountDecimal = deposit.amount as Decimal;
 
-    await this.prisma.distributor.update({
-      where: { id: deposit.distributorId },
-      data: { walletBalance: { increment: amountDecimal } },
-    });
+    // Atomic: balance credit + ledger row + status flip commit together.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.distributor.update({
+        where: { id: deposit.distributorId },
+        data: { walletBalance: { increment: amountDecimal } },
+      });
 
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId: deposit.distributorId,
-        type: 'DEPOSIT',
-        amount: amountDecimal,
-        description: `Wallet topup via ${deposit.paymentMethod} (UTR ${deposit.transactionId || deposit.id})`,
-        referenceId: deposit.id,
-      },
-    });
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: deposit.distributorId,
+          type: 'DEPOSIT',
+          amount: amountDecimal,
+          description: `Wallet topup via ${deposit.paymentMethod} (UTR ${deposit.transactionId || deposit.id})`,
+          referenceId: deposit.id,
+        },
+      });
 
-    const updated = await this.prisma.deposit.update({
-      where: { id: depositId },
-      data: { status: 'COMPLETED' },
+      return tx.deposit.update({
+        where: { id: depositId },
+        data: { status: 'COMPLETED' },
+      });
     });
 
     this.logger.log(`Deposit ${depositId} approved — ₹${amountDecimal} credited`);
@@ -612,55 +620,60 @@ export class WalletService {
       throw new BadRequestException('Cannot transfer to yourself');
     }
 
-    // Create transfer record
-    const transfer = await this.prisma.walletTransfer.create({
-      data: {
-        fromDistributorId,
-        toDistributorId: toDistributor.id,
-        amount: amountDecimal,
-        status: 'COMPLETED',
-      },
-    });
-
-    // Deduct from sender
-    await this.prisma.distributor.update({
-      where: { id: fromDistributorId },
-      data: {
-        walletBalance: {
-          decrement: amountDecimal,
+    // Atomic: both balance moves + both ledger rows commit together.
+    const transfer = await this.prisma.$transaction(async (tx) => {
+      // Create transfer record
+      const created = await tx.walletTransfer.create({
+        data: {
+          fromDistributorId,
+          toDistributorId: toDistributor.id,
+          amount: amountDecimal,
+          status: 'COMPLETED',
         },
-      },
-    });
+      });
 
-    // Add to recipient
-    await this.prisma.distributor.update({
-      where: { id: toDistributor.id },
-      data: {
-        walletBalance: {
-          increment: amountDecimal,
+      // Deduct from sender
+      await tx.distributor.update({
+        where: { id: fromDistributorId },
+        data: {
+          walletBalance: {
+            decrement: amountDecimal,
+          },
         },
-      },
-    });
+      });
 
-    // Log transactions
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId: fromDistributorId,
-        type: 'WALLET_TRANSFER_OUT',
-        amount: amountDecimal.negated(),
-        description: `Transfer to ${toDistributor.name}`,
-        referenceId: transfer.id,
-      },
-    });
+      // Add to recipient
+      await tx.distributor.update({
+        where: { id: toDistributor.id },
+        data: {
+          walletBalance: {
+            increment: amountDecimal,
+          },
+        },
+      });
 
-    await this.prisma.walletTransaction.create({
-      data: {
-        distributorId: toDistributor.id,
-        type: 'WALLET_TRANSFER_IN',
-        amount: amountDecimal,
-        description: `Transfer from ${fromDistributor.name}`,
-        referenceId: transfer.id,
-      },
+      // Log transactions
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: fromDistributorId,
+          type: 'WALLET_TRANSFER_OUT',
+          amount: amountDecimal.negated(),
+          description: `Transfer to ${toDistributor.name}`,
+          referenceId: created.id,
+        },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          distributorId: toDistributor.id,
+          type: 'WALLET_TRANSFER_IN',
+          amount: amountDecimal,
+          description: `Transfer from ${fromDistributor.name}`,
+          referenceId: created.id,
+        },
+      });
+
+      return created;
     });
 
     this.logger.log(`Transfer of ₹${amount} from ${fromDistributorId} to ${toDistributor.id}`);
