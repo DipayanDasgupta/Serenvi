@@ -1,7 +1,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS, ADMIN_NAV_ITEMS } from "@/lib/constants";
+import { NAV_ITEMS, ADMIN_NAV_ITEMS, ADMIN_EMAIL } from "@/lib/constants";
+import { useMyDistributor } from "@/lib/hooks/use-distributor";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -81,6 +82,8 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { data: me } = useMyDistributor();
+  const isAdmin = me?.email?.toLowerCase() === ADMIN_EMAIL;
 
   const isActive = (href: string) => {
     return pathname === href || pathname.startsWith(`${href}/`);
@@ -123,30 +126,31 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </Link>
         ))}
 
-        {/* Admin section */}
-        {!collapsed && (
+        {/* Admin section (admin only) */}
+        {isAdmin && !collapsed && (
           <div className="pt-4">
             <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted/60">
               Admin
             </p>
           </div>
         )}
-        {ADMIN_NAV_ITEMS.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onClose}
-            className={cn(
-              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
-              isActive(item.href)
-                ? "bg-surface-2 text-accent border-l-2 border-accent"
-                : "text-muted hover:bg-surface-2 hover:text-foreground"
-            )}
-          >
-            <span className="shrink-0">{icons[item.icon]}</span>
-            {!collapsed && <span>{item.label}</span>}
-          </Link>
-        ))}
+        {isAdmin &&
+          ADMIN_NAV_ITEMS.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={onClose}
+              className={cn(
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+                isActive(item.href)
+                  ? "bg-surface-2 text-accent border-l-2 border-accent"
+                  : "text-muted hover:bg-surface-2 hover:text-foreground"
+              )}
+            >
+              <span className="shrink-0">{icons[item.icon]}</span>
+              {!collapsed && <span>{item.label}</span>}
+            </Link>
+          ))}
       </nav>
 
       {/* Toggle */}
@@ -228,12 +232,15 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     <span>{item.label}</span>
                   </Link>
                 ))}
-                <div className="pt-4">
-                  <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted/60">
-                    Admin
-                  </p>
-                </div>
-                {ADMIN_NAV_ITEMS.map((item) => (
+                {isAdmin && (
+                  <div className="pt-4">
+                    <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted/60">
+                      Admin
+                    </p>
+                  </div>
+                )}
+                {isAdmin &&
+                  ADMIN_NAV_ITEMS.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}

@@ -242,7 +242,8 @@ export class SalesService {
   }
 
   /**
-   * Purchase product directly (deduct from buyer's wallet)
+   * Purchase product directly — wallet only.
+   * Money is always deducted from the buyer's wallet balance.
    */
   async purchaseProduct(
     buyerId: string,
@@ -250,6 +251,10 @@ export class SalesService {
     quantity: number,
     paymentMethod: string,
   ) {
+    if (!paymentMethod || paymentMethod.toUpperCase() !== 'WALLET') {
+      throw new BadRequestException('Payments are wallet-only. Please top up your wallet first.');
+    }
+    paymentMethod = 'WALLET';
     // Validate buyer
     const buyer = await this.prisma.distributor.findUnique({
       where: { id: buyerId },
@@ -276,22 +281,20 @@ export class SalesService {
     // Calculate purchase amount
     const purchaseAmount = product.price.mul(new Decimal(quantity));
 
-    // Check wallet balance if paying with wallet
-    if (paymentMethod.toUpperCase() === 'WALLET') {
-      if (buyer.walletBalance.lessThan(purchaseAmount)) {
-        throw new BadRequestException('Insufficient wallet balance');
-      }
-
-      // Deduct from wallet
-      await this.prisma.distributor.update({
-        where: { id: buyerId },
-        data: {
-          walletBalance: {
-            decrement: purchaseAmount,
-          },
-        },
-      });
+    // Wallet-only: balance must cover the purchase
+    if (buyer.walletBalance.lessThan(purchaseAmount)) {
+      throw new BadRequestException('Insufficient wallet balance. Please deposit funds first.');
     }
+
+    // Deduct from wallet
+    await this.prisma.distributor.update({
+      where: { id: buyerId },
+      data: {
+        walletBalance: {
+          decrement: purchaseAmount,
+        },
+      },
+    });
 
     // 1. Create sale record (using buyer as seller for now - system purchase)
     const sale = await this.prisma.sale.create({

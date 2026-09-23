@@ -38,6 +38,8 @@ export const NAV_ITEMS = [
   { label: "Profile", href: "/profile", icon: "user" },
 ] as const;
 
+export const ADMIN_EMAIL = "aryamanmandal0201@gmail.com";
+
 export const ADMIN_NAV_ITEMS = [
   { label: "Admin Dashboard", href: "/admin", icon: "shield" },
   { label: "Users", href: "/admin/users", icon: "users" },

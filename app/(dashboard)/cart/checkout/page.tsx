@@ -2,111 +2,55 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/hooks/use-cart";
+import { useWallet } from "@/lib/hooks/use-wallet";
 import { useAuthToken } from "@/lib/hooks/use-api";
 import { api } from "@/lib/api-client";
-import { openCheckout } from "@/lib/razorpay";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import type { RazorpayOrder } from "@/lib/types";
-import type { RazorpayResponse } from "@/lib/razorpay";
 
-type CheckoutStatus = "idle" | "creating-order" | "paying" | "verifying" | "recording-sales" | "success" | "error";
+type CheckoutStatus = "idle" | "paying" | "success" | "error";
 
 export default function CheckoutPage() {
-  const router = useRouter();
   const { items, total, count, clearCart } = useCart();
+  const { wallet } = useWallet();
   const getToken = useAuthToken();
   const [status, setStatus] = useState<CheckoutStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+
+  const balance = wallet?.balance || 0;
+  const insufficient = total > balance;
 
   const handlePayment = async () => {
     if (items.length === 0) return;
 
     try {
-      setStatus("creating-order");
+      setStatus("paying");
       setErrorMessage("");
       const token = await getToken();
 
-      // Step 1: Create Razorpay order
-      const order = await api.post<RazorpayOrder>(
-        "/payments/create-order",
-        { amount: total },
-        token
-      );
-
-      // Step 2: Open Razorpay checkout
-      setStatus("paying");
-
-      await new Promise<RazorpayResponse>((resolve, reject) => {
-        openCheckout({
-          key: order.keyId,
-          amount: order.amount,
-          currency: order.currency,
-          name: "Serenvi",
-          description: `Order - ${count} item${count !== 1 ? "s" : ""}`,
-          order_id: order.orderId,
-          theme: { color: "#6366f1" },
-          handler: (response) => {
-            resolve(response);
-          },
-          modal: {
-            ondismiss: () => {
-              reject(new Error("Payment cancelled"));
-            },
-          },
-        }).catch(reject);
-      }).then(async (response) => {
-        // Step 3: Verify payment
-        setStatus("verifying");
+      // Wallet-only: record one sale per cart item, deducted from wallet
+      for (const item of items) {
         await api.post(
-          "/payments/verify",
+          "/sales",
           {
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_signature: response.razorpay_signature,
+            productId: item.productId,
+            quantity: item.quantity,
+            paymentMethod: "WALLET",
           },
           token
         );
-
-        // Step 4: Record sales for each item
-        setStatus("recording-sales");
-        for (const item of items) {
-          await api.post(
-            "/sales",
-            {
-              productId: item.productId,
-              quantity: item.quantity,
-              amount: item.product.price * item.quantity,
-              paymentMethod: "RAZORPAY",
-            },
-            token
-          );
-        }
-
-        // Step 5: Clear cart and show success
-        await clearCart();
-        setStatus("success");
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Payment failed";
-      if (message === "Payment cancelled") {
-        setStatus("idle");
-      } else {
-        setStatus("error");
-        setErrorMessage(message);
       }
-    }
-  };
 
-  const statusMessages: Record<string, string> = {
-    "creating-order": "Creating order...",
-    paying: "Processing payment...",
-    verifying: "Verifying payment...",
-    "recording-sales": "Recording your purchase...",
+      await clearCart();
+      setStatus("success");
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(
+        err instanceof Error ? err.message : "Payment failed. Please try again."
+      );
+    }
   };
 
   // Success State
@@ -120,7 +64,7 @@ export default function CheckoutPage() {
         </div>
         <h1 className="text-2xl font-bold text-foreground mb-2">Payment Successful!</h1>
         <p className="text-muted mb-8 max-w-md">
-          Your order has been placed and payment has been confirmed. You can view your order history for details.
+          {formatCurrency(total)} was deducted from your wallet. You can view your order history for details.
         </p>
         <div className="flex gap-4">
           <Link href="/orders">
@@ -146,7 +90,7 @@ export default function CheckoutPage() {
     );
   }
 
-  const isProcessing = status !== "idle" && status !== "error";
+  const isProcessing = status === "paying";
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -161,7 +105,7 @@ export default function CheckoutPage() {
           Back to Cart
         </Link>
         <h1 className="text-2xl font-bold text-foreground">Checkout</h1>
-        <p className="mt-1 text-muted">Review your order and complete payment.</p>
+        <p className="mt-1 text-muted">Pay from your wallet balance.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -217,6 +161,12 @@ export default function CheckoutPage() {
                 <span className="text-muted">Shipping</span>
                 <span className="text-success">Free</span>
               </div>
+              <div className="flex items-center justify-between rounded-xl bg-surface-2/50 px-3 py-2 text-sm">
+                <span className="text-muted">Wallet balance</span>
+                <span className={insufficient ? "font-semibold text-danger" : "font-semibold text-foreground"}>
+                  {formatCurrency(balance)}
+                </span>
+              </div>
               <div className="border-t border-border pt-3">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-foreground">Total</span>
@@ -233,6 +183,18 @@ export default function CheckoutPage() {
                 </div>
               )}
 
+              {/* Insufficient balance */}
+              {status === "idle" && insufficient && items.length > 0 && (
+                <div className="rounded-xl bg-warning/10 border border-warning/20 p-3">
+                  <p className="text-sm text-warning">
+                    Insufficient wallet balance. You need {formatCurrency(total - balance)} more.
+                  </p>
+                  <Link href="/wallet/deposit" className="mt-2 inline-block text-sm font-semibold text-accent hover:underline">
+                    Deposit funds →
+                  </Link>
+                </div>
+              )}
+
               {/* Processing Status */}
               {isProcessing && (
                 <div className="flex items-center gap-3 rounded-xl bg-accent/10 border border-accent/20 p-3">
@@ -240,7 +202,7 @@ export default function CheckoutPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  <span className="text-sm text-accent">{statusMessages[status]}</span>
+                  <span className="text-sm text-accent">Deducting from wallet…</span>
                 </div>
               )}
 
@@ -250,13 +212,13 @@ export default function CheckoutPage() {
                 className="w-full"
                 onClick={handlePayment}
                 isLoading={isProcessing}
-                disabled={isProcessing}
+                disabled={isProcessing || insufficient}
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
                   <line x1="1" y1="10" x2="23" y2="10" />
                 </svg>
-                Pay {formatCurrency(total)}
+                Pay {formatCurrency(total)} from Wallet
               </Button>
 
               <div className="flex items-center justify-center gap-2 pt-1">
@@ -264,7 +226,7 @@ export default function CheckoutPage() {
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
-                <span className="text-xs text-muted">Secured by Razorpay</span>
+                <span className="text-xs text-muted">Deducted only from your wallet</span>
               </div>
             </div>
           </Card>

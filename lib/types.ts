@@ -191,6 +191,8 @@ export interface AdminStats {
   totalOrders: number;
   totalCommissions: number;
   recentOrders: Sale[];
+  depositsSummary?: { pendingCount: number; pendingAmount: number };
+  recentDeposits?: DepositRequest[];
 }
 
 // ====== Payment ======

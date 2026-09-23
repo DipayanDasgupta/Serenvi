@@ -92,37 +92,77 @@ export class AdminService {
   }
 
   /**
-   * Get dashboard stats
+   * Get dashboard stats (shape matches frontend AdminStats)
    */
   async getDashboardStats() {
-    const [totalUsers, totalSales, totalOrders, pendingOrders] = await Promise.all([
+    const [
+      totalUsers,
+      salesAgg,
+      totalOrders,
+      commissionsAgg,
+      pendingDeposits,
+      pendingDepositsAgg,
+    ] = await Promise.all([
       this.prisma.distributor.count(),
       this.prisma.sale.aggregate({ _sum: { saleAmount: true } }),
       this.prisma.sale.count(),
-      this.prisma.sale.count({ where: { orderStatus: 'PENDING' } }),
+      this.prisma.commission.aggregate({ _sum: { commissionAmount: true } }),
+      this.prisma.deposit.count({ where: { status: 'PENDING' } }),
+      this.prisma.deposit.aggregate({
+        _sum: { amount: true },
+        where: { status: 'PENDING' },
+      }),
     ]);
 
-    const recentOrders = await this.prisma.sale.findMany({
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        seller: { select: { name: true, email: true } },
-        product: { select: { name: true, price: true } },
-      },
-    });
+    const [recentOrders, recentDeposits] = await Promise.all([
+      this.prisma.sale.findMany({
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          seller: { select: { id: true, name: true, email: true } },
+          product: { select: { id: true, name: true, price: true } },
+        },
+      }),
+      this.prisma.deposit.findMany({
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          distributor: {
+            select: { id: true, name: true, email: true, referralCode: true },
+          },
+        },
+      }),
+    ]);
+
+    const toNum = (v: any): number =>
+      v == null ? 0 : typeof v.toNumber === 'function' ? v.toNumber() : Number(v);
 
     return {
       totalUsers,
-      totalRevenue: totalSales._sum.saleAmount || 0,
+      totalSales: toNum(salesAgg._sum.saleAmount),
       totalOrders,
-      pendingOrders,
-      recentOrders: recentOrders.map((o) => ({
+      totalCommissions: toNum(commissionsAgg._sum.commissionAmount),
+      recentOrders: recentOrders.map((o: any) => ({
         id: o.id,
-        buyer: o.seller.name,
-        product: o.product.name,
-        amount: o.saleAmount,
+        distributorId: o.sellerId,
+        productId: o.productId,
+        quantity: o.quantity,
+        amount: toNum(o.saleAmount),
+        paymentMethod: o.paymentMethod,
         status: o.orderStatus,
-        date: o.createdAt,
+        product: {
+          ...o.product,
+          price: toNum(o.product?.price),
+        },
+        createdAt: o.createdAt,
+      })),
+      depositsSummary: {
+        pendingCount: pendingDeposits,
+        pendingAmount: toNum(pendingDepositsAgg._sum.amount),
+      },
+      recentDeposits: recentDeposits.map((d: any) => ({
+        ...d,
+        amount: toNum(d.amount),
       })),
     };
   }
