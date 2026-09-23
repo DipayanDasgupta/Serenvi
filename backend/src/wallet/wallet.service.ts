@@ -93,36 +93,73 @@ export class WalletService {
     }
 
     // Get summary stats
-    const [commissionTotal, achievementTotal, salaryTotal] = await Promise.all(
-      [
-        this.prisma.walletTransaction.aggregate({
-          _sum: { amount: true },
-          where: {
-            distributorId,
-            type: 'MLM_COMMISSION',
-          },
-        }),
-        this.prisma.walletTransaction.aggregate({
-          _sum: { amount: true },
-          where: {
-            distributorId,
-            type: 'ACHIEVEMENT_REWARD',
-          },
-        }),
-        this.prisma.walletTransaction.aggregate({
-          _sum: { amount: true },
-          where: {
-            distributorId,
-            type: 'LEADERSHIP_SALARY',
-          },
-        }),
-      ],
-    );
+    // NOTE: amounts are stored positive with the type indicating direction,
+    // so earnings must sum explicit credit types (debits like PURCHASE /
+    // WITHDRAWAL are also positive numbers).
+    const CREDIT_TYPES = [
+      'DEPOSIT',
+      'MLM_COMMISSION',
+      'ACHIEVEMENT_REWARD',
+      'LEADERSHIP_SALARY',
+      'WALLET_TRANSFER_IN',
+      'REFUND',
+    ];
+    const [
+      commissionTotal,
+      achievementTotal,
+      salaryTotal,
+      earningsTotal,
+      withdrawalsTotal,
+      pendingWithdrawalsTotal,
+    ] = await Promise.all([
+      this.prisma.walletTransaction.aggregate({
+        _sum: { amount: true },
+        where: {
+          distributorId,
+          type: 'MLM_COMMISSION',
+        },
+      }),
+      this.prisma.walletTransaction.aggregate({
+        _sum: { amount: true },
+        where: {
+          distributorId,
+          type: 'ACHIEVEMENT_REWARD',
+        },
+      }),
+      this.prisma.walletTransaction.aggregate({
+        _sum: { amount: true },
+        where: {
+          distributorId,
+          type: 'LEADERSHIP_SALARY',
+        },
+      }),
+      this.prisma.walletTransaction.aggregate({
+        _sum: { amount: true },
+        where: {
+          distributorId,
+          type: { in: CREDIT_TYPES },
+        },
+      }),
+      this.prisma.withdrawalRequest.aggregate({
+        _sum: { amount: true },
+        where: { distributorId, status: 'APPROVED' },
+      }),
+      this.prisma.withdrawalRequest.aggregate({
+        _sum: { amount: true },
+        where: { distributorId, status: 'PENDING' },
+      }),
+    ]);
 
     return {
       ...distributor,
       walletBalance: distributor.walletBalance.toNumber(),
       totalSales: distributor.totalSales.toNumber(),
+      // Aliases the WalletSummary shape the frontend reads
+      // (wallet page + checkout use `balance`, not `walletBalance`).
+      balance: distributor.walletBalance.toNumber(),
+      totalEarnings: earningsTotal._sum.amount?.toNumber() || 0,
+      totalWithdrawals: withdrawalsTotal._sum.amount?.toNumber() || 0,
+      pendingWithdrawals: pendingWithdrawalsTotal._sum.amount?.toNumber() || 0,
       earnings: {
         commission: commissionTotal._sum.amount?.toNumber() || 0,
         achievements: achievementTotal._sum.amount?.toNumber() || 0,
