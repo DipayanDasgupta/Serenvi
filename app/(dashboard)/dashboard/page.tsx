@@ -43,10 +43,11 @@ const num = (v: unknown) => {
 };
 
 export default function DashboardPage() {
-  const { data: me } = useMyDistributor();
+  const { data: me, isLoading: meLoading } = useMyDistributor();
   const { data: stats, isLoading } = useAPI<DashboardStats>(
     me?.id ? `/distributors/${me.id}/dashboard` : null
   );
+  const loading = isLoading || meLoading;
   const { data: activity } = useWalletTransactions(0, 5);
 
   const totalSales = num(stats?.totalSales);
@@ -71,7 +72,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats */}
-      {isLoading ? (
+      {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-28 w-full rounded-2xl" />
