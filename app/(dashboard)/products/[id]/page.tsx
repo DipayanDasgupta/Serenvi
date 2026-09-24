@@ -21,9 +21,15 @@ export default function ProductDetailPage() {
   const [isAdding, setIsAdding] = useState(false);
 
   const sizes = product?.sizes?.split(",").map((s) => s.trim()).filter(Boolean) || [];
+  // Apparel with a real size run requires a choice. "One Size"/"Free Size"
+  // items are a single fixed size, so there is nothing to pick.
+  const singleSize = sizes.length <= 1 || /^(one|free)\s*size$/i.test(sizes[0] || "");
+  const needsSize = sizes.length > 0 && !singleSize;
+  const sizeMissing = needsSize && !selectedSize;
 
   const handleAddToCart = async () => {
     if (!product) return;
+    if (sizeMissing) return;
     setIsAdding(true);
     try {
       await addToCart(product.id, quantity, selectedSize);
@@ -199,20 +205,29 @@ export default function ProductDetailPage() {
           </div>
 
           {/* Add to Cart */}
+          {sizeMissing && (
+            <p className="-mt-2 text-sm text-warning">
+              Please select a size to continue.
+            </p>
+          )}
           <Button
             variant="primary"
             size="lg"
             className="w-full"
             isLoading={isAdding}
             onClick={handleAddToCart}
-            disabled={product.stockQuantity === 0}
+            disabled={product.stockQuantity === 0 || sizeMissing}
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="9" cy="21" r="1" />
               <circle cx="20" cy="21" r="1" />
               <path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6" />
             </svg>
-            {product.stockQuantity === 0 ? "Out of Stock" : "Add to Cart"}
+            {product.stockQuantity === 0
+              ? "Out of Stock"
+              : sizeMissing
+                ? "Select a Size"
+                : "Add to Cart"}
           </Button>
         </div>
       </div>

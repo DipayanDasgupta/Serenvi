@@ -146,9 +146,21 @@ export default function ProductsPage() {
                 </div>
 
                 {product.sizes && (
-                  <p className="text-xs text-muted">
-                    Sizes: {product.sizes}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-muted">Sizes:</span>
+                    {product.sizes
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                      .map((s) => (
+                        <span
+                          key={s}
+                          className="rounded-md border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-foreground"
+                        >
+                          {s}
+                        </span>
+                      ))}
+                  </div>
                 )}
 
                 <div className="flex items-center justify-between mt-auto pt-2">
