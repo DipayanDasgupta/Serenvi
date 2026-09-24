@@ -94,6 +94,46 @@ def normalize_gender(g: str) -> str:
 # Size runs by product type. The sheet's "Size/Color Variants" column holds
 # COLOUR names (black / petrol / bluebeige), not sizes, so sizes are derived
 # from the garment type instead.
+def classify_gender(name: str, slug: str, link: str, image_url: str,
+                    sheet_gender: str, product_type: str = "") -> str:
+    """Classify a product as Men / Women using the strongest evidence first.
+
+    The sheet's own Gender column is the operator's own classification and is
+    used as the fallback, but it is demonstrably wrong on a number of rows
+    (41 products are literally named "... Women ..." yet the sheet says Men).
+    So we look for an explicit gender token in, in order of reliability:
+
+        1. product name   (human-written, e.g. "Mavi Women Graphic Print T-Shirt")
+        2. buy-link slug  (Ajio encodes it: mavi-men-graphic-print-...)
+        3. buy link / image filename (assets.ajio.com/.../mavi_..._men_....jpg)
+
+    NOTE: the token test must be whole-word. Plain substring matching is wrong
+    because "women" CONTAINS "men" — that bug previously labelled the entire
+    catalog as Men.
+    """
+    def token(text: str) -> str | None:
+        s = " " + str(text or "").lower().replace("%2c", " ") \
+                        .replace("-", " ").replace("_", " ") + " "
+        s = " ".join(s.split())
+        if " women " in s or " womens " in s or " woman " in s or " girls " in s or " girl " in s:
+            return "Women"
+        if " kids " in s or " child " in s or " children " in s:
+            return "Kids"
+        if " men " in s or " mens " in s or " man " in s or " boy " in s or " boys " in s:
+            return "Men"
+        return None
+
+    for field in (name, slug, link, image_url):
+        hit = token(field)
+        if hit:
+            # The brief asks for a male/female split, so childrenswear follows
+            # the explicit girl/boy cue it already carries.
+            return "Women" if hit == "Kids" else hit
+
+    # No explicit evidence anywhere: fall back to the operator's sheet column.
+    return normalize_gender(sheet_gender)
+
+
 def sizes_for(gender: str, product_type: str) -> str:
     t = str(product_type or "").lower()
     if any(k in t for k in ("jewel", "necklace", "pendant", "bangle", "bracelet",
@@ -180,20 +220,23 @@ def main() -> None:
         except (TypeError, ValueError):
             price = 0
         ptype = (r[3] or "General").strip()
-        gender = normalize_gender(r[9])
+        link = str(r[7] or "")
+        img = (r[4] or "").strip()
         # Prefer the sheet's real product name; fall back to the buy-link slug.
         sheet_name = clean_sheet_name(r[0])
         if sheet_name:
             named += 1
+        final_name = sheet_name or title(slug)
+        gender = classify_gender(final_name, slug, link, img, r[9], ptype)
         jobs.append(
             {
                 "slug": slug,
                 "id": stable_id(slug),
-                "name": sheet_name or title(slug),
+                "name": final_name,
                 "price": price,
                 "category": (r[2] or "Clothing").strip(),
                 "type": ptype,
-                "img": (r[4] or "").strip(),
+                "img": img,
                 "stock": int(r[5]) if isinstance(r[5], (int, float)) else 0,
                 "desc": (r[6] or "").strip()[:2000],
                 "gender": gender,
@@ -203,6 +246,10 @@ def main() -> None:
         jobs[-1]["sizes"] = sizes_for(gender, ptype)
     print(f"unique products to import: {len(jobs)} (skipped {skipped} duplicate buy-links)")
     print(f"real names from sheet: {named}, names rebuilt from slug: {len(jobs) - named}")
+    spread: dict[str, int] = {}
+    for j in jobs:
+        spread[j["gender"]] = spread.get(j["gender"], 0) + 1
+    print(f"gender split: {spread}")
 
     print("downloading images...")
     with ThreadPoolExecutor(max_workers=16) as ex:
