@@ -12,7 +12,7 @@ export class ProductController {
   async getProducts(
     @Query('category') category?: string,
     @Query('skip') skip: string = '0',
-    @Query('take') take: string = '500',
+    @Query('take') take: string = '600',
   ) {
     return this.productService.getProducts(category, parseInt(skip), parseInt(take));
   }
