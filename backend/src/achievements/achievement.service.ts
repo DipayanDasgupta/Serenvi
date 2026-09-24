@@ -120,29 +120,74 @@ export class AchievementService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const claimedRanks = new Set(achievements.map((a: any) => a.rankName));
+    const achieved = new Set(achievements.map((a: any) => a.rankName));
+    const personalSales = (distributor.level1Sales as Decimal).toNumber();
 
     const progress = ACHIEVEMENT_MILESTONES.map((milestone) => {
-      const claimed = claimedRanks.has(milestone.rank);
-      // Calculate progress based on PERSONAL SALES (level1Sales) only
-      const progressPercent = distributor.level1Sales
+      const claimed = achieved.has(milestone.rank);
+      // Progress is based on PERSONAL SALES (level1Sales) ONLY.
+      const progressPercent = new Decimal(personalSales)
         .div(new Decimal(milestone.salesTarget))
         .mul(100);
 
       return {
         rank: milestone.rank,
+        rankName: milestone.rank,
         salesTarget: milestone.salesTarget,
+        targetAmount: milestone.salesTarget,
         rewardAmount: milestone.reward,
-        personalSalesMade: distributor.level1Sales.toNumber(),
+        personalSalesMade: personalSales,
         claimed,
-        progressPercent: Math.min(Math.round(parseInt(progressPercent.toString())), 100),
+        isClaimed: claimed,
+        // Reached but not yet claimed by the user.
+        isUnlocked: new Decimal(personalSales).gte(new Decimal(milestone.salesTarget)),
+        progressPercent: Math.min(
+          Math.round(parseInt(progressPercent.toString())),
+          100,
+        ),
+      };
+    });
+
+    // The next milestone the user has not reached yet.
+    const next = ACHIEVEMENT_MILESTONES.find(
+      (m) => personalSales < m.salesTarget,
+    );
+
+    // Flat achievement list in the shape the frontend expects, so it can look
+    // up a rank and get both its id and its claimed state in one place.
+    const milestones = ACHIEVEMENT_MILESTONES.map((milestone) => {
+      const row = achievements.find((a: any) => a.rankName === milestone.rank);
+      return {
+        id: row?.id,
+        distributorId,
+        rankName: milestone.rank,
+        targetAmount: milestone.salesTarget,
+        rewardAmount: milestone.reward,
+        isUnlocked: new Decimal(personalSales).gte(new Decimal(milestone.salesTarget)),
+        isClaimed: !!row?.claimedAt,
+        claimedAt: row?.claimedAt ?? undefined,
+        unlockedAt: row?.createdAt ?? undefined,
+        progressPercent: progress.find((p) => p.rank === milestone.rank)!.progressPercent,
       };
     });
 
     return {
       currentRank: distributor.rank,
-      personalSales: distributor.level1Sales.toNumber(), // Only personal sales - NOT referred revenue
-      achievements,
+      // Only personal sales — never team sales.
+      currentSales: personalSales,
+      personalSales,
+      achievements: milestones,
+      nextMilestone: next
+        ? {
+            id: undefined,
+            rankName: next.rank,
+            targetAmount: next.salesTarget,
+            rewardAmount: next.reward,
+            isUnlocked: false,
+            isClaimed: false,
+            progressPercent: progress.find((p) => p.rank === next.rank)!.progressPercent,
+          }
+        : undefined,
       progress,
     };
   }

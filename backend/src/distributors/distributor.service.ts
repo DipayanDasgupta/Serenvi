@@ -634,22 +634,77 @@ export class DistributorService {
   }
 
   async getTeamAnalytics(distributorId: string) {
-    const downline = await this.prisma.mLMTreeNode.findMany({
-      where: { ancestorId: distributorId },
-      include: {
-        descendant: { select: { id: true, name: true, totalSales: true, rank: true } },
-      },
-    });
+    const [downline, distributor] = await Promise.all([
+      this.prisma.mLMTreeNode.findMany({
+        where: { ancestorId: distributorId, depth: { gte: 1, lte: 15 } },
+        orderBy: { depth: 'asc' },
+        include: {
+          descendant: {
+            select: {
+              id: true,
+              name: true,
+              totalSales: true,
+              teamSales: true,
+              rank: true,
+              status: true,
+            },
+          },
+        },
+      }),
+      this.prisma.distributor.findUnique({
+        where: { id: distributorId },
+        select: { totalSales: true, teamSales: true, teamMonthlySales: true },
+      }),
+    ]);
 
     const directDownline = downline.filter((d: any) => d.depth === 1);
+    const activeMembers = downline.filter(
+      (d: any) => d.descendant.status === 'ACTIVE',
+    ).length;
+
+    // Sales per level: a member's own sales plus the sales inside their own
+    // downline, so each level's figure is the full volume it contributed.
+    const salesByLevel: Array<{
+      level: number;
+      sales: number;
+      members: number;
+    }> = [];
+    for (let level = 1; level <= 15; level++) {
+      const members = downline.filter((d: any) => d.depth === level);
+      if (members.length === 0) continue;
+      const total = members.reduce(
+        (sum: Decimal, m: any) =>
+          sum
+            .plus(m.descendant.totalSales as Decimal)
+            .plus(m.descendant.teamSales as Decimal),
+        new Decimal(0),
+      );
+      salesByLevel.push({
+        level,
+        sales: total.toNumber(),
+        members: members.length,
+      });
+    }
 
     return {
+      // Canonical names consumed by the frontend TeamAnalytics contract.
+      totalTeamSize: downline.length,
+      activeMembers,
+      totalTeamSales: distributor ? (distributor.teamSales as Decimal).toNumber() : 0,
+      monthlyTeamSales: distributor
+        ? (distributor.teamMonthlySales as Decimal).toNumber()
+        : 0,
+      salesByLevel,
+      // Detail + backwards-compatible aliases.
       teamSize: downline.length,
       directDownline: directDownline.length,
       members: directDownline.map((d: any) => ({
         id: d.descendant.id,
         name: d.descendant.name,
         rank: d.descendant.rank,
+        status: d.descendant.status,
+        ownSales: d.descendant.totalSales.toNumber(),
+        teamSales: d.descendant.teamSales.toNumber(),
         sales: d.descendant.totalSales.toNumber(),
       })),
     };

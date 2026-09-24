@@ -29,6 +29,12 @@ const TOTAL_POOL_PERCENTAGE = SALARY_TIERS.reduce(
   0,
 );
 
+/** First instant of the current calendar month (local server time). */
+function startOfCurrentMonth(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+}
+
 @Injectable()
 export class SalaryService {
   private readonly logger = new Logger(SalaryService.name);
@@ -44,13 +50,16 @@ export class SalaryService {
     try {
       this.logger.log('Resetting monthly sales for all users...');
 
+      // Reset EVERY distributor, not only ACTIVE ones: a user suspended
+      // earlier in the month must still start the new month at zero, or stale
+      // volume would make them look salary-eligible in the new month.
       const result = await this.prisma.distributor.updateMany({
-        where: { status: 'ACTIVE' },
         data: {
           monthlySales: new Decimal(0),
           // Personal sales (level1Sales) and lifetime team sales NEVER reset.
           // teamMonthlySales resets with the month; teamSales does not.
           teamMonthlySales: new Decimal(0),
+          monthlyResetDate: new Date(),
           // DO NOT reset currentLeadershipSalary - it is reset after being credited at end of month
         },
       });
@@ -179,6 +188,56 @@ export class SalaryService {
       this.logger.error('Failed to calculate leadership salary:', error);
       // Don't throw - this runs hourly
     }
+  }
+
+  /**
+   * Read-only view of the current month's tier state, for the admin console.
+   * Never credits a wallet.
+   */
+  async getDistributionSnapshot() {
+    const [distributors, revenue] = await Promise.all([
+      this.prisma.distributor.findMany({
+        where: { currentLeadershipSalary: { gt: new Decimal(0) } },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          monthlySales: true,
+          currentLeadershipRank: true,
+          currentLeadershipSalary: true,
+        },
+      }),
+      this.prisma.sale.aggregate({
+        _sum: { saleAmount: true },
+        where: { orderStatus: 'COMPLETED', createdAt: { gte: startOfCurrentMonth() } },
+      }),
+    ]);
+
+    return {
+      month: startOfCurrentMonth().toISOString().slice(0, 7),
+      totalReferredRevenue: (revenue._sum.saleAmount as Decimal | null)?.toNumber() ?? 0,
+      totalPoolPercentage: TOTAL_POOL_PERCENTAGE,
+      eligibleCount: distributors.length,
+      totalPending: distributors
+        .reduce((s, d) => s.plus(d.currentLeadershipSalary as Decimal), new Decimal(0))
+        .toNumber(),
+      members: distributors.map((d) => ({
+        id: d.id,
+        name: d.name,
+        status: d.status,
+        monthlySales: (d.monthlySales as Decimal).toNumber(),
+        tier: d.currentLeadershipRank,
+        threshold:
+          d.currentLeadershipRank !== null
+            ? SALARY_TIERS[d.currentLeadershipRank]?.monthlysSalesThreshold
+            : undefined,
+        poolPercentage:
+          d.currentLeadershipRank !== null
+            ? SALARY_TIERS[d.currentLeadershipRank]?.poolPercentage
+            : undefined,
+        pendingSalary: (d.currentLeadershipSalary as Decimal).toNumber(),
+      })),
+    };
   }
 
   /**

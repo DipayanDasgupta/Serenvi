@@ -15,27 +15,65 @@ import type { WalletTransaction } from "@/lib/types";
 
 interface DashboardStats {
   totalSales: number;
+  ownSales?: number;
+  personalSales?: number;
+  teamSales?: number;
+  monthlyTeamSales?: number;
   walletBalance: number;
   monthlySales: number;
   rank: string;
   downlineCount: number;
+  teamCount?: number;
+  directDownlineCount?: number;
   nextRank: { rank: string; progress: number } | null;
 }
 
+// The ledger uses the real wallet transaction type names; older UI aliases
+// (COMMISSION / PURCHASE / TRANSFER) are kept so old rows still colour right.
 const txVariant = (type: WalletTransaction["type"]) => {
   switch (type) {
+    case "MLM_COMMISSION":
     case "COMMISSION":
     case "DEPOSIT":
+    case "WALLET_TRANSFER_IN":
       return "success" as const;
+    case "PRODUCT_PURCHASE":
     case "PURCHASE":
     case "WITHDRAWAL":
+    case "WALLET_TRANSFER_OUT":
       return "danger" as const;
+    case "ACHIEVEMENT_REWARD":
     case "ACHIEVEMENT":
       return "warning" as const;
+    case "LEADERSHIP_SALARY":
+    case "SALARY":
+      return "info" as const;
     default:
       return "info" as const;
   }
 };
+
+/** Friendlier label than the raw enum for the activity feed. */
+const txLabel = (type: WalletTransaction["type"]) => {
+  switch (type) {
+    case "MLM_COMMISSION":
+      return "Commission";
+    case "ACHIEVEMENT_REWARD":
+      return "Achievement";
+    case "LEADERSHIP_SALARY":
+      return "Salary";
+    case "PRODUCT_PURCHASE":
+      return "Purchase";
+    case "WALLET_TRANSFER_IN":
+      return "Transfer In";
+    case "WALLET_TRANSFER_OUT":
+      return "Transfer Out";
+    default:
+      return type;
+  }
+};
+
+const txTime = (tx: WalletTransaction) => tx.date || tx.createdAt || "";
 
 const num = (v: unknown) => {
   const n = Number(v);
@@ -50,10 +88,13 @@ export default function DashboardPage() {
   const loading = isLoading || meLoading;
   const { data: activity } = useWalletTransactions(0, 5);
 
-  const totalSales = num(stats?.totalSales);
+  // "Total Sales" is the team-wide figure (personal + deeper levels). The
+  // card's sub-label shows this month's team volume, so both come from the
+  // team metrics rather than the sponsor-only monthlySales counter.
+  const totalSales = num(stats?.teamSales ?? stats?.totalSales);
   const walletBalance = num(stats?.walletBalance);
-  const monthlySales = num(stats?.monthlySales);
-  const teamSize = num(stats?.downlineCount);
+  const monthlySales = num(stats?.monthlyTeamSales ?? stats?.monthlySales);
+  const teamSize = num(stats?.teamCount ?? stats?.downlineCount);
   const rank = stats?.rank || "Starter";
   const nextRank = stats?.nextRank;
 
@@ -152,16 +193,16 @@ export default function DashboardPage() {
             />
           ) : (
             <div className="space-y-3">
-              {transactions.map((tx) => (
+              {transactions.map((tx, i) => (
                 <div
-                  key={tx.id}
+                  key={tx.id || `${tx.type}-${i}`}
                   className="flex items-center justify-between rounded-xl bg-surface-2/50 px-4 py-3"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge variant={txVariant(tx.type)}>{tx.type}</Badge>
+                      <Badge variant={txVariant(tx.type)}>{txLabel(tx.type)}</Badge>
                       <span className="text-xs text-muted">
-                        {formatRelativeTime(tx.createdAt)}
+                        {formatRelativeTime(txTime(tx))}
                       </span>
                     </div>
                     <p className="mt-1 text-sm text-foreground truncate">

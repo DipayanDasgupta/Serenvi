@@ -153,15 +153,23 @@ export class SalesService {
 
     const total = await this.prisma.sale.count({ where: { sellerId } });
 
-    return {
-      sales: sales.map((s: any) => ({
-        ...s,
-        saleAmount: s.saleAmount.toNumber(),
-        commissions: s.commissions.map((c: any) => ({
-          ...c,
-          commissionAmount: c.commissionAmount.toNumber(),
-        })),
+    const rows = sales.map((s: any) => ({
+      ...s,
+      saleAmount: s.saleAmount.toNumber(),
+      // Aliases the frontend Sale contract reads.
+      sellerId: s.sellerId,
+      amount: s.saleAmount.toNumber(),
+      status: s.orderStatus,
+      commissions: s.commissions.map((c: any) => ({
+        ...c,
+        commissionAmount: c.commissionAmount.toNumber(),
       })),
+    }));
+
+    return {
+      // `data` is the paginated array key the frontend reads.
+      data: rows,
+      sales: rows,
       total,
       skip,
       take,

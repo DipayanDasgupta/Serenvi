@@ -13,20 +13,26 @@ import type { WalletTransaction } from "@/lib/types";
 
 const FILTER_TABS = [
   { label: "All", value: "ALL" },
-  { label: "Commissions", value: "COMMISSION" },
-  { label: "Achievements", value: "ACHIEVEMENT" },
-  { label: "Salary", value: "SALARY" },
-  { label: "Purchases", value: "PURCHASE" },
-  { label: "Transfers", value: "TRANSFER" },
+  { label: "Commissions", value: "MLM_COMMISSION" },
+  { label: "Achievements", value: "ACHIEVEMENT_REWARD" },
+  { label: "Salary", value: "LEADERSHIP_SALARY" },
+  { label: "Purchases", value: "PRODUCT_PURCHASE" },
+  { label: "Transfers", value: "WALLET_TRANSFER" },
 ];
 
 const TYPE_BADGE_VARIANTS: Record<string, "success" | "warning" | "danger" | "info" | "default"> = {
+  MLM_COMMISSION: "success",
   COMMISSION: "success",
+  ACHIEVEMENT_REWARD: "warning",
   ACHIEVEMENT: "warning",
+  LEADERSHIP_SALARY: "info",
   SALARY: "info",
+  PRODUCT_PURCHASE: "danger",
   PURCHASE: "danger",
   WITHDRAWAL: "danger",
   DEPOSIT: "success",
+  WALLET_TRANSFER_IN: "info",
+  WALLET_TRANSFER_OUT: "info",
   TRANSFER: "info",
   REFUND: "default",
 };
@@ -40,21 +46,43 @@ export default function TransactionsPage() {
   const filtered = useMemo(() => {
     if (!transactions) return [];
     if (filter === "ALL") return transactions;
+    // WALLET_TRANSFER is a UI grouping for both transfer directions.
+    if (filter === "WALLET_TRANSFER") {
+      return transactions.filter(
+        (tx) =>
+          tx.type === "WALLET_TRANSFER_IN" ||
+          tx.type === "WALLET_TRANSFER_OUT" ||
+          tx.type === "TRANSFER",
+      );
+    }
     return transactions.filter((tx) => tx.type === filter);
   }, [transactions, filter]);
 
   const paginated = filtered.slice(page * pageSize, (page + 1) * pageSize);
   const totalPages = Math.ceil(filtered.length / pageSize);
 
+  // A positive ledger amount is a credit; the ledger's own sign is the truth.
   const isCredit = (type: string) =>
-    ["COMMISSION", "ACHIEVEMENT", "SALARY", "DEPOSIT", "REFUND"].includes(type);
+    [
+      "MLM_COMMISSION",
+      "COMMISSION",
+      "ACHIEVEMENT_REWARD",
+      "ACHIEVEMENT",
+      "LEADERSHIP_SALARY",
+      "SALARY",
+      "DEPOSIT",
+      "WALLET_TRANSFER_IN",
+      "REFUND",
+    ].includes(type);
 
   const columns = [
     {
       key: "createdAt",
       label: "Date",
       render: (item: WalletTransaction) => (
-        <span className="text-sm text-muted">{formatDate(item.createdAt)}</span>
+        <span className="text-sm text-muted">
+          {formatDate(item.date || item.createdAt || "")}
+        </span>
       ),
     },
     {

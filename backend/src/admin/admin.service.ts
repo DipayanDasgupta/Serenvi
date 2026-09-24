@@ -96,7 +96,15 @@ export class AdminService {
    */
   async updateOrderStatus(orderId: string, status: string) {
     const normalized = String(status || '').toUpperCase();
-    const allowed = ['COMPLETED', 'PENDING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'REFUNDED'];
+    const allowed = [
+      'PENDING',
+      'PROCESSING',
+      'SHIPPED',
+      'DELIVERED',
+      'COMPLETED',
+      'CANCELLED',
+      'REFUNDED',
+    ];
     if (!allowed.includes(normalized)) {
       throw new BadRequestException(`Invalid order status: ${status}`);
     }

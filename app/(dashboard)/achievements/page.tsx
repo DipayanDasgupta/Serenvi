@@ -30,7 +30,7 @@ export default function AchievementsPage() {
     }
   };
 
-  const currentSales = progress?.currentSales || 0;
+  const currentSales = progress?.currentSales ?? progress?.personalSales ?? 0;
 
   // Find current rank
   const currentRankIndex = ACHIEVEMENT_MILESTONES.findIndex(
@@ -41,16 +41,22 @@ export default function AchievementsPage() {
       ? "Starter"
       : ACHIEVEMENT_MILESTONES[Math.max(0, currentRankIndex - 1)]?.rankName || "Global Icon";
 
+  // The API returns a row for EVERY milestone (not just unlocked ones), each
+  // carrying isUnlocked / isClaimed / progressPercent. Look the rank up there
+  // so a reached-but-unclaimed rank shows "Unlocked" and can be claimed.
+  const getAchievement = (rankName: string) =>
+    progress?.achievements?.find(
+      (a) => a.rankName === rankName || a.rank === rankName,
+    );
+
   const getAchievementStatus = (rankName: string) => {
-    const achievement = progress?.achievements?.find((a) => a.rankName === rankName);
+    const achievement = getAchievement(rankName);
     if (achievement?.isClaimed) return "claimed";
     if (achievement?.isUnlocked) return "unlocked";
     return "locked";
   };
 
-  const getAchievementId = (rankName: string) => {
-    return progress?.achievements?.find((a) => a.rankName === rankName)?.id;
-  };
+  const getAchievementId = (rankName: string) => getAchievement(rankName)?.id;
 
   if (isLoading) {
     return (
@@ -114,7 +120,10 @@ export default function AchievementsPage() {
         {ACHIEVEMENT_MILESTONES.map((milestone) => {
           const status = getAchievementStatus(milestone.rankName);
           const achievementId = getAchievementId(milestone.rankName);
-          const progressPercent = Math.min(100, (currentSales / milestone.targetAmount) * 100);
+          // Prefer the server-computed percentage; fall back to computing it.
+          const progressPercent =
+            getAchievement(milestone.rankName)?.progressPercent ??
+            Math.min(100, (currentSales / milestone.targetAmount) * 100);
           const rankColor = RANK_COLORS[milestone.rankName] || "#6b7280";
 
           return (

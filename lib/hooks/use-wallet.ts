@@ -29,13 +29,20 @@ export function useWallet() {
 }
 
 export function useWalletTransactions(skip = 0, take = 20) {
-  const result = useAPI<WalletTransaction[] | { transactions: WalletTransaction[] }>(
-    `/wallet/history?skip=${skip}&take=${take}`
-  );
-  // Backend returns a paginated object { transactions, total }; normalize defensively.
-  const data: WalletTransaction[] | undefined = Array.isArray(result.data)
-    ? result.data
-    : result.data?.transactions;
+  const result = useAPI<
+    | WalletTransaction[]
+    | {
+        transactions?: WalletTransaction[];
+        history?: WalletTransaction[];
+        data?: WalletTransaction[];
+      }
+  >(`/wallet/history?skip=${skip}&take=${take}`);
+  // The ledger endpoint returns { history, transactions, data } (all the same
+  // rows). Accept every key so a rename can never blank the activity feed.
+  const raw = result.data;
+  const data: WalletTransaction[] | undefined = Array.isArray(raw)
+    ? raw
+    : raw?.transactions ?? raw?.history ?? raw?.data;
   return { ...result, data };
 }
 

@@ -47,15 +47,40 @@ export const ADMIN_NAV_ITEMS = [
   { label: "Deposits", href: "/admin/deposits", icon: "wallet" },
 ] as const;
 
+// Keyed by the real WalletTransaction.type values the ledger writes, with the
+// legacy UI aliases kept so historical rows still colour correctly.
 export const TRANSACTION_TYPE_COLORS: Record<string, string> = {
+  MLM_COMMISSION: "text-success",
   COMMISSION: "text-success",
+  ACHIEVEMENT_REWARD: "text-warning",
   ACHIEVEMENT: "text-warning",
+  LEADERSHIP_SALARY: "text-accent-2",
   SALARY: "text-accent-2",
+  PRODUCT_PURCHASE: "text-danger",
   PURCHASE: "text-danger",
   WITHDRAWAL: "text-danger",
   DEPOSIT: "text-success",
+  WALLET_TRANSFER_IN: "text-accent",
+  WALLET_TRANSFER_OUT: "text-accent",
   TRANSFER: "text-accent",
   REFUND: "text-muted",
+};
+
+export const TRANSACTION_TYPE_LABELS: Record<string, string> = {
+  MLM_COMMISSION: "Commission",
+  COMMISSION: "Commission",
+  ACHIEVEMENT_REWARD: "Achievement",
+  ACHIEVEMENT: "Achievement",
+  LEADERSHIP_SALARY: "Salary",
+  SALARY: "Salary",
+  PRODUCT_PURCHASE: "Purchase",
+  PURCHASE: "Purchase",
+  WITHDRAWAL: "Withdrawal",
+  DEPOSIT: "Deposit",
+  WALLET_TRANSFER_IN: "Transfer In",
+  WALLET_TRANSFER_OUT: "Transfer Out",
+  TRANSFER: "Transfer",
+  REFUND: "Refund",
 };
 
 export const RANK_COLORS: Record<string, string> = {

@@ -1,35 +1,30 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { Decimal } from '@prisma/client/runtime/library';
 
+/**
+ * Monthly metric resets live in SalaryService (@Cron '0 0 1 * *'), which is
+ * the single owner of the monthly cycle. This class previously registered a
+ * SECOND cron doing the same job — a duplicate monthly reset (rule 11: "do not
+ * duplicate monthly reset cron jobs"). It is retained as a plain provider only
+ * so the module import keeps working; the scheduling was removed.
+ */
 @Injectable()
 export class SchedulerService {
-  private readonly logger = new Logger(SchedulerService.name);
-
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Reset monthly sales for all distributors on the 1st of every month at midnight
-   * Cron: 0 0 1 * * = At 00:00:00 on day-of-month 1
+   * Manual/recovery reset, callable by an operator if a month was missed.
+   * Idempotent: sets the counters to zero, so running it twice is harmless.
+   * Never touches level1Sales (achievement basis) or teamSales (lifetime).
    */
-  @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
   async resetMonthlySales() {
-    try {
-      this.logger.log('Starting monthly sales reset...');
-
-      const result = await this.prisma.distributor.updateMany({
-        data: {
-          monthlySales: new Decimal(0),
-          monthlyResetDate: new Date(),
-        },
-      });
-
-      this.logger.log(
-        `✓ Monthly sales reset complete. Updated ${result.count} distributors.`,
-      );
-    } catch (error) {
-      this.logger.error('Failed to reset monthly sales:', error);
-    }
+    const { Decimal } = await import('@prisma/client/runtime/library');
+    return this.prisma.distributor.updateMany({
+      data: {
+        monthlySales: new Decimal(0),
+        teamMonthlySales: new Decimal(0),
+        monthlyResetDate: new Date(),
+      },
+    });
   }
 }

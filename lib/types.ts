@@ -67,15 +67,27 @@ export interface CartItem {
 // ====== Sales ======
 export interface Sale {
   id: string;
-  distributorId: string;
+  sellerId: string;
+  distributorId?: string;
   productId: string;
   quantity: number;
   amount: number;
+  saleAmount: number;
   paymentMethod: string;
-  status: "COMPLETED" | "PENDING" | "REFUNDED";
+  status: OrderStatus;
+  orderStatus?: OrderStatus;
   product?: Product;
   createdAt: string;
 }
+
+export type OrderStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "REFUNDED";
 
 export interface SalesStats {
   totalSales: number;
@@ -103,13 +115,30 @@ export interface WalletSummary {
 }
 
 export interface WalletTransaction {
-  id: string;
-  distributorId: string;
-  type: "COMMISSION" | "ACHIEVEMENT" | "SALARY" | "PURCHASE" | "WITHDRAWAL" | "DEPOSIT" | "TRANSFER" | "REFUND";
+  id?: string;
+  distributorId?: string;
+  type:
+    | "MLM_COMMISSION"
+    | "ACHIEVEMENT_REWARD"
+    | "LEADERSHIP_SALARY"
+    | "PRODUCT_PURCHASE"
+    | "PURCHASE"
+    | "WITHDRAWAL"
+    | "DEPOSIT"
+    | "WALLET_TRANSFER_IN"
+    | "WALLET_TRANSFER_OUT"
+    | "TRANSFER"
+    | "COMMISSION"
+    | "ACHIEVEMENT"
+    | "SALARY"
+    | "REFUND";
   amount: number;
   description: string;
   referenceId?: string;
-  createdAt: string;
+  /** The ledger exposes `date`; older shapes used `createdAt`. */
+  date?: string;
+  createdAt?: string;
+  status?: string;
 }
 
 export interface DepositRequest {
@@ -137,27 +166,46 @@ export interface WithdrawalRequest {
 
 // ====== Achievements ======
 export interface Achievement {
-  id: string;
-  distributorId: string;
+  id?: string;
+  distributorId?: string;
   rankName: string;
+  /** Some responses label the rank `rank` instead. */
+  rank?: string;
   targetAmount: number;
+  salesTarget?: number;
   rewardAmount: number;
   isUnlocked: boolean;
   isClaimed: boolean;
+  claimed?: boolean;
+  progressPercent?: number;
+  personalSalesMade?: number;
   claimedAt?: string;
   unlockedAt?: string;
 }
 
-export interface AchievementMilestone {
-  rankName: string;
-  targetAmount: number;
-  rewardAmount: number;
-}
-
 export interface AchievementProgress {
   currentSales: number;
+  /** Alias of currentSales — both names are returned by the API. */
+  personalSales?: number;
+  currentRank?: string;
   achievements: Achievement[];
   nextMilestone?: AchievementMilestone;
+}
+
+export interface AchievementMilestone {
+  id?: string;
+  rank: string;
+  rankName?: string;
+  salesTarget?: number;
+  targetAmount: number;
+  rewardAmount: number;
+  personalSalesMade?: number;
+  claimed: boolean;
+  isClaimed: boolean;
+  isUnlocked: boolean;
+  progressPercent: number;
+  claimedAt?: string;
+  unlockedAt?: string;
 }
 
 // ====== Team ======
@@ -182,6 +230,17 @@ export interface TeamAnalytics {
   totalTeamSales: number;
   monthlyTeamSales: number;
   salesByLevel: { level: number; sales: number; members: number }[];
+  teamSize?: number;
+  directDownline?: number;
+  members?: Array<{
+    id: string;
+    name: string;
+    rank: string;
+    status?: string;
+    sales?: number;
+    ownSales: number;
+    teamSales: number;
+  }>;
 }
 
 // ====== Admin ======

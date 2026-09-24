@@ -9,11 +9,17 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { Sale, PaginatedResponse } from "@/lib/types";
 
-const STATUS_VARIANTS: Record<string, "success" | "warning" | "danger"> = {
+const STATUS_VARIANTS: Record<string, "success" | "warning" | "danger" | "info"> = {
   COMPLETED: "success",
+  DELIVERED: "success",
+  PROCESSING: "info",
   PENDING: "warning",
+  SHIPPED: "info",
   REFUNDED: "danger",
+  CANCELLED: "danger",
 };
+
+const STATUS_STEPS = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "COMPLETED"];
 
 export default function OrdersPage() {
   const [page, setPage] = useState(0);
@@ -22,9 +28,14 @@ export default function OrdersPage() {
     `/sales/history?skip=${page * pageSize}&take=${pageSize}`
   );
 
+  // The API returns { data, sales, total } — `data` is the paginated array.
   const orders = data?.data || [];
   const totalOrders = data?.total || 0;
   const hasMore = (page + 1) * pageSize < totalOrders;
+
+  const statusOf = (o: Sale) => o.status || o.orderStatus || "PENDING";
+  const amountOf = (o: Sale) =>
+    Number(o.amount ?? o.saleAmount ?? 0) || 0;
 
   const columns = [
     {
@@ -55,18 +66,33 @@ export default function OrdersPage() {
       label: "Amount",
       render: (item: Sale) => (
         <span className="text-sm font-semibold text-foreground">
-          {formatCurrency(item.amount)}
+          {formatCurrency(amountOf(item))}
         </span>
       ),
     },
     {
       key: "status",
       label: "Status",
-      render: (item: Sale) => (
-        <Badge variant={STATUS_VARIANTS[item.status] || "default"}>
-          {item.status}
-        </Badge>
-      ),
+      render: (item: Sale) => {
+        const status = statusOf(item);
+        const stepIndex = STATUS_STEPS.indexOf(status);
+        return (
+          <div className="space-y-1.5">
+            <Badge variant={STATUS_VARIANTS[status] || "default"}>{status}</Badge>
+            {stepIndex >= 0 && stepIndex < STATUS_STEPS.length - 1 && (
+              <div className="flex items-center gap-1">
+                {STATUS_STEPS.slice(stepIndex + 1, stepIndex + 4).map((s) => (
+                  <span
+                    key={s}
+                    className="inline-flex h-1.5 w-1.5 rounded-full bg-border"
+                    title={s}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
   ];
 

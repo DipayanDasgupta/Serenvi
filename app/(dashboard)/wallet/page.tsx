@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatRelativeTime } from "@/lib/utils";
-import { TRANSACTION_TYPE_COLORS } from "@/lib/constants";
+import { TRANSACTION_TYPE_COLORS, TRANSACTION_TYPE_LABELS } from "@/lib/constants";
 
 export default function WalletPage() {
   const { wallet, error: walletError, isLoading: walletLoading } = useWallet();
@@ -145,9 +145,11 @@ export default function WalletPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={`text-xs font-semibold ${TRANSACTION_TYPE_COLORS[tx.type] || "text-muted"}`}>
-                      {tx.type}
+                      {TRANSACTION_TYPE_LABELS[tx.type] || tx.type}
                     </span>
-                    <span className="text-xs text-muted">{formatRelativeTime(tx.createdAt)}</span>
+                    <span className="text-xs text-muted">
+                      {formatRelativeTime(tx.date || tx.createdAt || "")}
+                    </span>
                   </div>
                   <p className="text-sm text-foreground truncate mt-0.5">{tx.description}</p>
                 </div>

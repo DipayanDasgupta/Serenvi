@@ -832,9 +832,60 @@ export class WalletService {
   }
 
   /**
-   * Get complete wallet history (deposits, transfers, withdrawals, purchases)
+   * Get complete wallet history.
+   *
+   * WalletTransaction is the immutable ledger of record: every money movement
+   * writes exactly one row there. This method therefore returns THAT ledger
+   * only. Previously it also merged Deposit / Sale / WithdrawalRequest rows,
+   * which duplicated movements already present (a purchase showed up twice —
+   * once as PRODUCT_PURCHASE from the ledger and again as PURCHASE from the
+   * sale) and showed pending withdrawals as if money had already moved.
    */
   async getCompleteWalletHistory(distributorId: string, skip: number = 0, take: number = 50) {
+    const ledger = await this.prisma.walletTransaction.findMany({
+      where: { distributorId },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    });
+
+    const total = await this.prisma.walletTransaction.count({
+      where: { distributorId },
+    });
+
+    const history = ledger.map((t) => ({
+      id: t.id,
+      type: t.type,
+      amount: t.amount.toNumber(),
+      description: t.description,
+      referenceId: t.referenceId ?? undefined,
+      date: t.createdAt,
+      createdAt: t.createdAt,
+      status: 'COMPLETED',
+    }));
+
+    return {
+      history,
+      // Aliases the frontend hook reads.
+      transactions: history,
+      data: history,
+      total,
+      skip,
+      take,
+      deposits: history.filter((h) => h.type === 'DEPOSIT').length,
+      transfers: history.filter(
+        (h) => h.type === 'WALLET_TRANSFER_IN' || h.type === 'WALLET_TRANSFER_OUT',
+      ).length,
+      withdrawals: history.filter((h) => h.type === 'WITHDRAWAL').length,
+      purchases: history.filter((h) => h.type === 'PRODUCT_PURCHASE').length,
+    };
+  }
+
+  /**
+   * @deprecated superseded by getCompleteWalletHistory above, kept only to
+   * document the old merge-based implementation.
+   */
+  private async legacyMergedWalletHistory(distributorId: string, skip: number = 0, take: number = 50) {
     // Get all deposits
     const deposits = await this.prisma.deposit.findMany({
       where: { distributorId },

@@ -13,9 +13,22 @@ import type { TeamAnalytics } from "@/lib/types";
 export default function TeamPage() {
   const { data: me } = useMyDistributor();
   const distributorId = me?.id;
-  const { data: analytics, isLoading } = useAPI<TeamAnalytics>(
+  const { data: raw, isLoading } = useAPI<TeamAnalytics>(
     distributorId ? `/distributors/${distributorId}/team` : null
   );
+
+  // Accept either naming so the cards can never read as zero when the API
+  // shape changes: canonical (totalTeamSize/...) or legacy (teamSize/...).
+  const analytics: TeamAnalytics | undefined = raw
+    ? {
+        ...raw,
+        totalTeamSize: raw.totalTeamSize ?? raw.teamSize ?? 0,
+        activeMembers: raw.activeMembers ?? raw.teamSize ?? 0,
+        totalTeamSales: raw.totalTeamSales ?? 0,
+        monthlyTeamSales: raw.monthlyTeamSales ?? 0,
+        salesByLevel: raw.salesByLevel ?? [],
+      }
+    : undefined;
 
   return (
     <div className="space-y-6 animate-fade-in">
